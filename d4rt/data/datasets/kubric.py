@@ -162,13 +162,23 @@ class KubricDataset(BaseVideoDataset):
         # Load depth maps
         depth_dir = scene_dir / 'depth'
         if depth_dir.exists():
+            # Try PNG first, then NPY
             depth_files = sorted(depth_dir.glob('*.png'))
+            if not depth_files:
+                depth_files = sorted(depth_dir.glob('*.npy'))
+
             depth_maps = []
 
             for depth_file in depth_files[:T]:
-                from PIL import Image
-                depth_img = Image.open(depth_file)
-                depth_array = np.array(depth_img).astype(np.float32) / 1000.0  # Convert to meters
+                if depth_file.suffix == '.png':
+                    from PIL import Image
+                    depth_img = Image.open(depth_file)
+                    depth_array = np.array(depth_img).astype(np.float32) / 1000.0  # Convert to meters
+                elif depth_file.suffix == '.npy':
+                    depth_array = np.load(depth_file).astype(np.float32)
+                else:
+                    continue
+
                 depth_array = torch.from_numpy(depth_array)
                 # Resize if needed
                 if depth_array.shape != (H, W):
@@ -179,8 +189,13 @@ class KubricDataset(BaseVideoDataset):
                     ).squeeze()
                 depth_maps.append(depth_array)
 
-            depth_maps = torch.stack(depth_maps, dim=0)  # [T, H, W]
-            visibility = depth_maps > 0  # Simple visibility mask
+            if depth_maps:
+                depth_maps = torch.stack(depth_maps, dim=0)  # [T, H, W]
+                visibility = depth_maps > 0  # Simple visibility mask
+            else:
+                # No depth files found
+                depth_maps = torch.ones(T, H, W) * 5.0  # Assume 5m depth
+                visibility = torch.ones(T, H, W, dtype=torch.bool)
         else:
             # Generate synthetic depth if not available
             depth_maps = torch.ones(T, H, W) * 5.0  # Assume 5m depth

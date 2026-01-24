@@ -89,3 +89,4 @@ visualization/
 *.mp4
 *.avi
 *.gif
+test_checkpoints/
