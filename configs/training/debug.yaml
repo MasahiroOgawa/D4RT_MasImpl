@@ -1,0 +1,90 @@
+# Debug Training Configuration
+# For testing with ViT-B on small datasets
+
+defaults:
+  - /model: vit_b
+
+experiment_name: d4rt_debug_vit_b
+seed: 42
+
+# Model
+model: vit_b
+
+# Training
+training:
+  max_steps: 10000
+  batch_size: 2  # Small batch for debugging
+  num_workers: 2
+  gradient_accumulation_steps: 1
+  mixed_precision: fp16  # fp16 or bf16 or null
+  gradient_checkpointing: false
+  clip_grad_norm: 1.0
+  log_every_n_steps: 10
+  val_every_n_steps: 500
+  save_every_n_steps: 1000
+  num_queries_per_step: 512  # Reduced for debugging
+
+# Optimizer
+optimizer:
+  type: adamw
+  lr: 1e-4
+  betas: [0.9, 0.999]
+  eps: 1e-8
+  weight_decay: 0.05
+
+# Learning Rate Scheduler
+scheduler:
+  type: cosine
+  warmup_steps: 500
+  T_max: 10000
+  eta_min: 1e-6
+
+# Loss Weights
+loss_weights:
+  l1_3d: 1.0
+  l2_2d: 0.1
+  normal: 0.05
+  motion: 0.1
+  visibility: 0.1
+
+# Dataset
+dataset:
+  name: kubric
+  data_dir: data/kubric
+  num_frames: 48
+  resolution: [256, 256]
+  train_split: train
+  val_split: val
+  # Data augmentation (training only)
+  augmentation:
+    random_crop: true
+    crop_size: [224, 224]
+    horizontal_flip: true
+    flip_prob: 0.5
+    color_jitter: true
+    brightness: 0.2
+    contrast: 0.2
+    saturation: 0.2
+    hue: 0.1
+
+# Query Sampling
+query_sampling:
+  num_queries: 512  # Reduced for debugging
+  visible_ratio: 0.5
+  occluded_ratio: 0.25
+  random_ratio: 0.25
+  temporal_sampling: uniform
+
+# Logging
+logging:
+  use_wandb: false  # Disable for debugging
+  wandb_project: d4rt
+  wandb_entity: null
+  log_dir: logs
+  save_dir: checkpoints
+
+# Hardware
+hardware:
+  num_gpus: 1
+  device: cuda
+  precision: 32

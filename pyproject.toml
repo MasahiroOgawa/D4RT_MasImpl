@@ -1,0 +1,87 @@
+[project]
+name = "d4rt"
+version = "0.1.0"
+description = "Dynamic 4D Reconstruction and Tracking - Implementation of Google DeepMind's D4RT"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "D4RT Implementation Team"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+
+dependencies = [
+    "torch>=2.1.0",
+    "torchvision>=0.16.0",
+    "einops>=0.7.0",
+    "timm>=0.9.12",
+    "opencv-python>=4.8.0",
+    "Pillow>=10.0.0",
+    "numpy>=1.24.0",
+    "scipy>=1.11.0",
+    "hydra-core>=1.3.0",
+    "omegaconf>=2.3.0",
+    "wandb>=0.16.0",
+    "tensorboard>=2.15.0",
+    "h5py>=3.10.0",
+    "imageio>=2.33.0",
+    "imageio-ffmpeg>=0.4.9",
+    "trimesh>=4.0.0",
+    "open3d>=0.18.0",
+    "tqdm>=4.66.0",
+    "matplotlib>=3.8.0",
+    "seaborn>=0.13.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "flake8>=6.1.0",
+    "isort>=5.12.0",
+]
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
