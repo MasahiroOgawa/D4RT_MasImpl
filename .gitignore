@@ -47,9 +47,9 @@ venv.bak/
 *.pt
 *.ckpt
 
-# Data
-data/
-datasets/
+# Data (root level only - don't ignore d4rt/data module)
+/data/
+/datasets/
 *.h5
 *.hdf5
 
