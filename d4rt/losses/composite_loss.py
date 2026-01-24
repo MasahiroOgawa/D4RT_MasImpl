@@ -93,7 +93,7 @@ class CompositeLoss(nn.Module):
             )
             loss_dict['loss_3d'] = loss_3d.item()
         else:
-            loss_3d = torch.tensor(0.0, device=predictions['xyz'].device)
+            loss_3d = torch.zeros(1, device=predictions['xyz'].device, requires_grad=True)
             loss_dict['loss_3d'] = 0.0
 
         # 2. 2D Reprojection Loss
@@ -107,7 +107,7 @@ class CompositeLoss(nn.Module):
             )
             loss_dict['loss_2d'] = loss_2d.item()
         else:
-            loss_2d = torch.tensor(0.0, device=predictions['xyz'].device)
+            loss_2d = torch.zeros(1, device=predictions['xyz'].device, requires_grad=True)
             loss_dict['loss_2d'] = 0.0
 
         # 3. Visibility Loss
@@ -118,7 +118,7 @@ class CompositeLoss(nn.Module):
             )
             loss_dict['loss_visibility'] = loss_vis.item()
         else:
-            loss_vis = torch.tensor(0.0, device=predictions['xyz'].device)
+            loss_vis = torch.zeros(1, device=predictions['xyz'].device, requires_grad=True)
             loss_dict['loss_visibility'] = 0.0
 
         # 4. Normal Loss (optional)
@@ -129,7 +129,7 @@ class CompositeLoss(nn.Module):
             )
             loss_dict['loss_normal'] = loss_normal.item()
         else:
-            loss_normal = torch.tensor(0.0, device=predictions['xyz'].device)
+            loss_normal = torch.zeros(1, device=predictions['xyz'].device, requires_grad=True)
             loss_dict['loss_normal'] = 0.0
 
         # 5. Motion Loss (optional)
@@ -142,7 +142,7 @@ class CompositeLoss(nn.Module):
             )
             loss_dict['loss_motion'] = loss_motion.item()
         else:
-            loss_motion = torch.tensor(0.0, device=predictions['xyz'].device)
+            loss_motion = torch.zeros(1, device=predictions['xyz'].device, requires_grad=True)
             loss_dict['loss_motion'] = 0.0
 
         # Compute weighted total loss
