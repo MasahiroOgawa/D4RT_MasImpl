@@ -101,6 +101,3 @@ python scripts/infer_depth.py \
 - **Website**: https://d4rt-paper.github.io/
 - **Original work**: Google DeepMind
 
-## License
-
-MIT License - see LICENSE file for details.
