@@ -1,4 +1,21 @@
-# Next Steps: Fixing 2D Projection Loss
+# Next Steps: Path to Paper-Level Performance
+
+## ✅ COMPLETED: Phase 11 - Fix 2D Projection Loss & Full Training
+
+**Training completed successfully with all losses:**
+- ✅ Fixed FP16 overflow bug (switched to FP32)
+- ✅ Fixed 2D projection loss overflow (UV clamping)
+- ✅ Fixed checkpointing symlink bug
+- ✅ Trained 5000 steps with full loss function (3D + 2D + motion + visibility)
+- ✅ Final validation loss: 2.75 (converged)
+- ✅ No inf/nan issues throughout training
+
+**Results:**
+- Model is learning (losses decreasing)
+- Tracking quality still poor (minimal movement ~0.08 units/frame)
+- Need longer training (50k+ steps) and more diverse data
+
+---
 
 ## ✅ COMPLETED: Phase 10 - Critical Bug Fix & First Successful Training
 
@@ -41,17 +58,23 @@
 
 ---
 
-## 🎯 Phase 11: Fix 2D Projection Loss (CURRENT)
+## 🎯 Phase 12: Scale Up to Paper Performance (CURRENT)
 
-**Problem:** 2D projection loss was disabled because it caused inf/nan.
+**Goal:** Match D4RT paper performance on public benchmarks (TAPVid-3D).
 
-**Root Cause to Investigate:**
-1. Camera extrinsics/intrinsics format issues
-2. Division by zero in projection
-3. Coordinate system mismatches
-4. Numerical instability in perspective projection
+**Paper targets:**
+- TAPVid-3D AJ: 0.304
+- APD3D: 0.410
+- OA: 0.875-0.897
 
-**Goal:** Fix projection code and re-enable 2D loss for proper tracking supervision.
+**See detailed roadmap:** `ROADMAP_TO_PAPER_PERFORMANCE.md`
+
+**Immediate next steps:**
+1. Download full MOVi-A dataset (9,703 samples)
+2. Train for 50k steps on full dataset
+3. Implement TAP-Vid evaluation metrics
+4. Add real-world datasets (PointOdyssey, Co3Dv2, ScanNet)
+5. Large-scale multi-dataset training (100k-200k steps)
 
 ### What's Working:
 
