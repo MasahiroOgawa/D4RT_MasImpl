@@ -1,42 +1,80 @@
 # Next Steps: Scaling Up Training
 
-## ✅ COMPLETED: Full Training Pipeline Verified!
+## ✅ COMPLETED: Phase 9 - Extended Training on MOVi-A (5k steps)
 
-**Phase 8b completed successfully** - Training on real MOVi-A data working!
+**Phase 9 completed successfully** - ViT-B trained for 5000 steps on MOVi-A data!
 
 ### What's Working:
 
 1. ✅ **uv sync workflow** - Dependency management with lockfile
 2. ✅ **MOVi-A dataset downloaded** - 100 train + 20 val samples from `gs://kubric-public/tfds`
 3. ✅ **Data conversion** - MOVi format → D4RT Kubric format converter working
-4. ✅ **Training on real data** - 5-step test completed successfully
+4. ✅ **Training on real data** - 5000 steps completed successfully
 5. ✅ **All components verified** - Data loading, model forward/backward, loss, validation
+6. ✅ **Memory optimizations** - Gradient checkpointing enabled, no OOM errors
 
 ### Current Setup:
 
 ```bash
-# Quick test (5 steps on MOVi-A data)
+# Full 5k training (completed)
 python scripts/train_simple.py \
     --model-config configs/model/vit_b_movi.yaml \
-    --training-config configs/training/quick_test_movi.yaml \
+    --training-config configs/training/train_5k_movi.yaml \
     --data-dir data/kubric
 
 # Current dataset: 100 MOVi-A training scenes (24 frames @ 256x256 each)
 ```
 
-### Training Results (5-step test):
-- **Step 1**: loss = 158.79
-- **Step 2**: loss = inf (numerical spike, expected with random init)
-- **Step 3**: val_loss = 328.19 (validation working!)
-- **Step 4**: loss = 90.38
-- **Step 5**: loss = 89.90
-- **Speed**: ~1.73 s/it on GPU
+### Training Results (5000 steps):
+- **Final validation loss**: 295.92
+- **Checkpoint saved**: `checkpoints/checkpoint_step_0005000.pth` (503 MB)
+- **Training speed**: ~2.4 it/s on GPU (11.6 GB VRAM)
+- **Memory usage**: Stable with gradient checkpointing enabled
+- **Issues**: Some numerical instability (inf losses) around step 4500, but recovered
 
 ---
 
-## Next: Scale Up Training & Data
+## 🎯 Phase 10: Inference Testing & Validation
 
-You now have 3 paths forward (in priority order):
+**Priority**: Test the trained model before scaling up further.
+
+Now that we have a trained checkpoint, the next step is to **verify it actually works** for point tracking before investing time in larger-scale training.
+
+### Phase 10 Tasks:
+
+#### 10a. Create Inference Script (RECOMMENDED FIRST)
+Create a simple inference script to test point tracking on validation videos:
+
+```python
+# scripts/infer_simple.py
+# Load checkpoint, run inference on a validation video, visualize tracks
+```
+
+**What to verify:**
+- Model loads from checkpoint correctly
+- Can process unseen validation videos
+- Point tracks are reasonable (not random)
+- Visualizations show plausible tracking
+
+#### 10b. Quantitative Evaluation
+Compare against validation set metrics:
+- Average Position Error (APE)
+- Occlusion accuracy
+- Survival curves (what % of tracks survive over time)
+
+#### 10c. Visual Inspection
+Generate videos with overlaid tracks to qualitatively assess:
+- Do tracks follow object motion?
+- How well does it handle occlusions?
+- Are there failure cases?
+
+**Expected time**: 1-2 hours
+
+---
+
+## Alternative: Scale Up Training & Data (Path 1-3)
+
+If you want to train longer before testing inference, you have 3 paths forward (in priority order):
 
 ---
 
