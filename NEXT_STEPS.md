@@ -1,4 +1,38 @@
-# Next Steps: Path to Paper-Level Performance
+# D4RT Implementation: Path to Paper-Level Performance
+
+## 🎯 FINAL GOAL
+**Reproduce D4RT paper performance on public benchmarks as closely as possible**
+
+**Target Metrics (TAPVid-3D benchmark):**
+- Average Jaccard (AJ): **0.304**
+- Average Percent within Delta 3D (APD3D): **0.410**
+- Occlusion Accuracy (OA): **0.875-0.897**
+- Speed: **18-300× faster than prior methods**
+
+**Current Status:**
+- ✅ Phase 1-11 completed: Training pipeline working, all bugs fixed
+- 📊 Current performance: Tracking quality poor, needs more training + data
+- 📍 **We are here**: Ready to scale up (Phase 12)
+- 🎯 Remaining: Phases 12-16 to reach paper performance
+
+---
+
+## Overall Progress Tracking
+
+**Phases 1-11: Foundation & Bug Fixes** ✅ COMPLETED
+- Build training pipeline
+- Fix critical FP16 bug
+- Fix 2D projection loss
+- Verify all components working
+
+**Phases 12-16: Scale to Paper Performance** 🚧 IN PROGRESS
+- Scale up training (50k steps)
+- Implement proper evaluation metrics
+- Add real-world datasets
+- Large-scale multi-dataset training
+- Match paper benchmarks
+
+---
 
 ## ✅ COMPLETED: Phase 11 - Fix 2D Projection Loss & Full Training
 
