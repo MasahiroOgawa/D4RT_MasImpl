@@ -93,7 +93,7 @@ class CheckpointManager:
 
         # Save latest checkpoint link
         latest_path = self.save_dir / 'checkpoint_latest.pth'
-        if latest_path.exists():
+        if latest_path.exists() or latest_path.is_symlink():
             latest_path.unlink()
         os.symlink(checkpoint_path.name, latest_path)
 
@@ -121,8 +121,8 @@ class CheckpointManager:
             self.best_metric = current_metric
             best_path = self.save_dir / 'checkpoint_best.pth'
 
-            # Remove old best checkpoint if exists
-            if best_path.exists():
+            # Remove old best checkpoint if exists (including broken symlinks)
+            if best_path.exists() or best_path.is_symlink():
                 best_path.unlink()
 
             # Create symlink to best checkpoint
