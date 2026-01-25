@@ -36,10 +36,10 @@ scheduler:
 
 loss_weights:
   l1_3d: 1.0
-  l2_2d: 0.0  # DISABLED: causes inf/nan due to projection issues
+  l2_2d: 0.1  # RE-ENABLED: Fixed with UV clamping
   normal: 0.0  # DISABLED: no normals in dataset
-  motion: 0.0  # DISABLED: isolate to 3D loss only
-  visibility: 0.0  # DISABLED: isolate to 3D loss only
+  motion: 0.1  # RE-ENABLED: For temporal consistency
+  visibility: 0.1  # RE-ENABLED: For occlusion handling
 
 dataset:
   name: kubric

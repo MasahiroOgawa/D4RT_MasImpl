@@ -49,11 +49,19 @@ class Projection2DLoss(nn.Module):
             pred_xyz, intrinsics, extrinsics, t_cam
         )  # [B, N, 2]
 
+        # Clamp predicted UV to prevent overflow in FP16/FP32
+        # Allow some margin outside image bounds, but prevent extreme values
+        pred_uv = torch.clamp(pred_uv, -512, 512)
+
         # Compute loss
         if self.loss_type == 'l1':
             loss = torch.abs(pred_uv - gt_uv).mean()
         elif self.loss_type == 'l2':
-            loss = torch.sqrt(((pred_uv - gt_uv) ** 2).sum(dim=-1) + 1e-8).mean()
+            # Use clamped L2 to prevent overflow
+            diff = pred_uv - gt_uv
+            # Clamp difference to prevent huge values
+            diff = torch.clamp(diff, -512, 512)
+            loss = torch.sqrt((diff ** 2).sum(dim=-1) + 1e-6).mean()
         else:
             raise ValueError(f"Unknown loss type: {self.loss_type}")
 
