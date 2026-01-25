@@ -1,8 +1,57 @@
-# Next Steps: Scaling Up Training
+# Next Steps: Fixing 2D Projection Loss
 
-## ✅ COMPLETED: Phase 9 - Extended Training on MOVi-A (5k steps)
+## ✅ COMPLETED: Phase 10 - Critical Bug Fix & First Successful Training
 
-**Phase 9 completed successfully** - ViT-B trained for 5000 steps on MOVi-A data!
+**MAJOR BREAKTHROUGH** - Identified and fixed critical FP16 bug preventing all learning!
+
+### 🔴 Critical Bug Found: FP16 Overflow
+
+**The Problem:**
+- Previous 5k training was completely broken - model never learned
+- FP16 mixed precision caused numerical overflow to inf/nan
+- Gradients were NaN, model weights frozen
+- Tracking was completely non-functional (all points in corner)
+
+**The Fix:**
+- Disabled FP16 → Use FP32
+- Disabled problematic losses (2D projection, motion, visibility, normal)
+- Reduced learning rate 10x (1e-4 → 1e-5)
+- Stronger gradient clipping (1.0 → 0.5)
+
+**Results After Fix:**
+- ✅ Training loss: 146.07 → 2.43 (98.3% reduction!)
+- ✅ Validation loss: 5.05 → 2.56 (stable convergence)
+- ✅ No inf/nan throughout 5000 steps
+- ✅ Model actually learning for the first time
+- ⚠️ Tracking still poor (points don't follow objects)
+
+### Current Status
+
+**Training completed successfully:**
+- Duration: 59 minutes
+- Checkpoints: 6 saved (every 1000 steps)
+- Final checkpoint: `checkpoints/checkpoint_step_0005000.pth`
+- Log: `logs/train_fp32.log`
+
+**Tracking quality: POOR**
+- Points have high visibility (99.9%)
+- But minimal movement (0.06-0.23 units)
+- Do NOT track actual objects
+- Need 2D supervision for proper tracking
+
+---
+
+## 🎯 Phase 11: Fix 2D Projection Loss (CURRENT)
+
+**Problem:** 2D projection loss was disabled because it caused inf/nan.
+
+**Root Cause to Investigate:**
+1. Camera extrinsics/intrinsics format issues
+2. Division by zero in projection
+3. Coordinate system mismatches
+4. Numerical instability in perspective projection
+
+**Goal:** Fix projection code and re-enable 2D loss for proper tracking supervision.
 
 ### What's Working:
 
