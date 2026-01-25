@@ -35,24 +35,34 @@ doc/                 # Documentation and flowcharts
 
 ## Installation
 
+### Using uv (Recommended)
+
 ```bash
 # Clone the repository
 git clone https://github.com/MasahiroOgawa/D4RT_MasImpl.git
 cd D4RT_MasImpl
 
-# Create virtual environment with uv
-uv venv
+# Sync dependencies and create virtual environment (one command!)
+uv sync
 
 # Activate virtual environment
 source .venv/bin/activate  # On Linux/Mac
 # or
 .venv\Scripts\activate  # On Windows
 
-# Install dependencies with uv
-uv pip install -r requirements.txt
-
-# Install the package in development mode
+# Install in development mode
 uv pip install -e .
+```
+
+### Using pip (Alternative)
+
+```bash
+# Create virtual environment
+python -m venv .venv
+source .venv/bin/activate
+
+# Install package
+pip install -e .
 ```
 
 ## Quick Start
@@ -101,3 +111,7 @@ python scripts/infer_depth.py \
 - **Website**: https://d4rt-paper.github.io/
 - **Original work**: Google DeepMind
 
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 or later - see the [LICENSE](LICENSE) file for details.
