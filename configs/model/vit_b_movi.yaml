@@ -1,0 +1,55 @@
+# ViT-B configuration for MOVi dataset
+# MOVi-A has 24 frames @ 256x256 resolution
+
+name: vit_b_movi
+
+# Encoder configuration
+encoder:
+  name: SpatioTemporalViT
+  num_layers: 12
+  embed_dim: 768
+  num_heads: 12
+  mlp_ratio: 4.0
+  dropout: 0.0
+  attention_dropout: 0.0
+  drop_path_rate: 0.1
+
+  # Patching configuration
+  patch_size: [2, 16, 16]  # [T, H, W]
+
+  # Input configuration (MOVi-A format)
+  input_resolution: [24, 256, 256]  # [T, H, W] - MOVi-A has 24 frames @ 256x256
+
+  # Gradient checkpointing
+  use_checkpoint: false
+
+# Decoder configuration
+decoder:
+  name: CrossAttentionDecoder
+  num_layers: 8
+  hidden_dim: 512
+  num_heads: 8
+  mlp_ratio: 4.0
+  dropout: 0.0
+  attention_dropout: 0.0
+  drop_path_rate: 0.1
+
+# Query encoder configuration
+query_encoder:
+  fourier:
+    num_frequencies: 10  # → 40 dims
+    max_frequency: 9  # 2^9 = 512
+  temporal:
+    embedding_dim: 256
+    max_frames: 64
+  patch_cnn:
+    patch_size: 9
+    channels: [64, 128]
+    output_dim: 256
+  output_dim: 512  # Final projection dimension
+
+# Model statistics
+# Encoder: ~86M parameters (ViT-B backbone)
+# Decoder: ~48M parameters (8 layers × 512 dim)
+# Query Encoder: ~1M parameters
+# Total: ~135M parameters
