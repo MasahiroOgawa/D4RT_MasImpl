@@ -134,6 +134,7 @@ def visualize_tracks(
 def main():
     parser = argparse.ArgumentParser(description='Point tracking inference with D4RT')
     parser.add_argument('--checkpoint', type=str, required=True, help='Path to model checkpoint')
+    parser.add_argument('--model-config', type=str, required=True, help='Path to model config file')
     parser.add_argument('--video', type=str, required=True, help='Path to input video')
     parser.add_argument('--points', type=str, required=True,
                        help='Points to track in format "[[u1,v1],[u2,v2],...]" (normalized 0-1)')
@@ -166,15 +167,18 @@ def main():
     points = parse_points(args.points)
     print(f"   Tracking {len(points)} points")
 
-    # Load model
-    print(f"\n3. Loading model from {args.checkpoint}...")
-    checkpoint = torch.load(args.checkpoint, map_location='cpu')
+    # Load model config
+    print(f"\n3. Loading model config from {args.model_config}...")
+    config = OmegaConf.load(args.model_config)
+    print(f"   Config loaded")
 
-    if 'config' not in checkpoint:
-        raise ValueError("Checkpoint does not contain model config")
-
-    config = OmegaConf.create(checkpoint['config'])
+    # Build model
+    print(f"   Building model...")
     model = build_d4rt_model(config)
+
+    # Load checkpoint
+    print(f"   Loading checkpoint from {args.checkpoint}...")
+    checkpoint = torch.load(args.checkpoint, map_location='cpu')
     model.load_state_dict(checkpoint['model_state_dict'])
     print(f"   Model loaded (step {checkpoint.get('step', 'unknown')})")
 

@@ -72,26 +72,27 @@ class PointTracker:
         N = points.shape[0]
         num_frames = end_frame - start_frame + 1
 
-        # Encode video once
-        encoder_features = self.model.encode_video(video)
-
         # Track points through all frames
         trajectories = []
         visibility_scores = []
 
+        # Add batch dimension to video if needed
+        if video.dim() == 4:  # [T, C, H, W]
+            video = video.unsqueeze(0)  # [1, T, C, H, W]
+
         for t in range(start_frame, end_frame + 1):
-            # Create queries for current frame
+            # Create queries for current frame (with batch dimension)
             queries = {
-                'u': points[:, 0],
-                'v': points[:, 1],
-                't_src': torch.full((N,), start_frame, dtype=torch.long, device=self.device),
-                't_tgt': torch.full((N,), t, dtype=torch.long, device=self.device),
-                't_cam': torch.full((N,), t, dtype=torch.long, device=self.device),
+                'u': points[:, 0].unsqueeze(0),  # [1, N]
+                'v': points[:, 1].unsqueeze(0),  # [1, N]
+                't_src': torch.full((1, N), start_frame, dtype=torch.long, device=self.device),
+                't_tgt': torch.full((1, N), t, dtype=torch.long, device=self.device),
+                't_cam': torch.full((1, N), t, dtype=torch.long, device=self.device),
             }
 
             # Process in batches if needed
             if N <= self.batch_size:
-                outputs = self.model(video, queries, encoder_features=encoder_features)
+                outputs = self.model(video, queries)
                 xyz = outputs['xyz'].squeeze(0)  # [N, 3]
                 vis = torch.sigmoid(outputs['visibility'].squeeze(0))  # [N, 1]
             else:
@@ -99,9 +100,9 @@ class PointTracker:
                 vis_list = []
                 for i in range(0, N, self.batch_size):
                     batch_queries = {
-                        k: v[i:i+self.batch_size] for k, v in queries.items()
+                        k: v[:, i:i+self.batch_size] for k, v in queries.items()
                     }
-                    batch_outputs = self.model(video, batch_queries, encoder_features=encoder_features)
+                    batch_outputs = self.model(video, batch_queries)
                     xyz_list.append(batch_outputs['xyz'].squeeze(0))
                     vis_list.append(torch.sigmoid(batch_outputs['visibility'].squeeze(0)))
 
