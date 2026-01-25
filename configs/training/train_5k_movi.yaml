@@ -13,9 +13,9 @@ training:
   batch_size: 1  # Keep at 1 for memory
   num_workers: 0  # Disable multiprocessing for debugging
   gradient_accumulation_steps: 4  # Increased for memory optimization (effective batch size of 4)
-  mixed_precision: fp16
+  mixed_precision: false  # DISABLED: fp16 may cause overflow to inf
   gradient_checkpointing: true  # Enable to reduce memory
-  clip_grad_norm: 1.0
+  clip_grad_norm: 0.5  # Stronger clipping to prevent explosion
   log_every_n_steps: 50
   val_every_n_steps: 500
   save_every_n_steps: 1000
@@ -23,10 +23,10 @@ training:
 
 optimizer:
   type: adamw
-  lr: 1e-4
+  lr: 1e-5  # Reduced 10x to prevent explosion
   betas: [0.9, 0.999]
   eps: 1e-8
-  weight_decay: 0.05
+  weight_decay: 0.01  # Reduced weight decay
 
 scheduler:
   type: cosine
@@ -36,10 +36,10 @@ scheduler:
 
 loss_weights:
   l1_3d: 1.0
-  l2_2d: 0.1
-  normal: 0.05
-  motion: 0.1
-  visibility: 0.1
+  l2_2d: 0.0  # DISABLED: causes inf/nan due to projection issues
+  normal: 0.0  # DISABLED: no normals in dataset
+  motion: 0.0  # DISABLED: isolate to 3D loss only
+  visibility: 0.0  # DISABLED: isolate to 3D loss only
 
 dataset:
   name: kubric
