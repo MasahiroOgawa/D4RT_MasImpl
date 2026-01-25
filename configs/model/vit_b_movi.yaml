@@ -21,7 +21,7 @@ encoder:
   input_resolution: [24, 256, 256]  # [T, H, W] - MOVi-A has 24 frames @ 256x256
 
   # Gradient checkpointing
-  use_checkpoint: false
+  use_checkpoint: true
 
 # Decoder configuration
 decoder:

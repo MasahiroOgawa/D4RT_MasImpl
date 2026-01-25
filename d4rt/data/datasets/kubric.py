@@ -67,10 +67,16 @@ class KubricDataset(BaseVideoDataset):
         if not split_dir.exists():
             raise ValueError(f"Split directory not found: {split_dir}")
 
-        self.samples = sorted([d for d in split_dir.iterdir() if d.is_dir()])
+        # Filter out scenes without RGB frames
+        all_dirs = sorted([d for d in split_dir.iterdir() if d.is_dir()])
+        self.samples = []
+        for scene_dir in all_dirs:
+            rgb_dir = scene_dir / 'rgb'
+            if rgb_dir.exists() and len(list(rgb_dir.glob('*.png'))) > 0:
+                self.samples.append(scene_dir)
 
         if len(self.samples) == 0:
-            raise ValueError(f"No scenes found in {split_dir}")
+            raise ValueError(f"No valid scenes found in {split_dir}")
 
         print(f"Loaded {len(self.samples)} scenes from Kubric {split} split")
 
@@ -81,6 +87,10 @@ class KubricDataset(BaseVideoDataset):
         # Load RGB frames
         rgb_dir = scene_dir / 'rgb'
         frame_files = sorted(rgb_dir.glob('*.png'))
+
+        # Skip scenes with no frames
+        if len(frame_files) == 0:
+            raise ValueError(f"No frames found in {rgb_dir}")
 
         if len(frame_files) < self.num_frames:
             # Repeat frames if not enough
