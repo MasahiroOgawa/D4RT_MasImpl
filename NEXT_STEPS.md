@@ -10,10 +10,10 @@
 - Speed: **18-300× faster than prior methods**
 
 **Current Status:**
-- ✅ Phase 1-11 completed: Training pipeline working, all bugs fixed
-- 📊 Current performance: Tracking quality poor, needs more training + data
-- 📍 **We are here**: Ready to scale up (Phase 12)
-- 🎯 Remaining: Phases 12-16 to reach paper performance
+- ✅ Phase 1-12b completed: 50k training on full MOVi-A (9,703 samples) finished
+- 📊 Current performance: Validation loss improved 36%, tracking quality shows moderate improvements
+- 📍 **We are here**: Ready for Phase 13 (TAP-Vid evaluation) or Phase 14-15 (more data/training)
+- 🎯 Remaining: Phases 13-16 to reach paper performance
 
 ---
 
@@ -26,11 +26,11 @@
 - Verify all components working
 
 **Phases 12-16: Scale to Paper Performance** 🚧 IN PROGRESS
-- Scale up training (50k steps)
-- Implement proper evaluation metrics
-- Add real-world datasets
-- Large-scale multi-dataset training
-- Match paper benchmarks
+- ✅ Scale up training (50k steps on full MOVi-A)
+- 📋 Implement proper evaluation metrics (Phase 13)
+- 📋 Add real-world datasets (Phase 14)
+- 📋 Large-scale multi-dataset training (Phase 15)
+- 📋 Match paper benchmarks (Phase 16)
 
 ---
 
@@ -92,7 +92,49 @@
 
 ---
 
-## 🎯 Phase 12: Scale Up to Paper Performance (CURRENT)
+## ✅ COMPLETED: Phase 12b - 50k Training on Full MOVi-A Dataset
+
+**Training Summary:**
+- ✅ Dataset: Full MOVi-A (9,703 training samples, 70 GB)
+- ✅ Training completed: 50,000 steps in 14h 40min
+- ✅ Final validation loss: **1.77** (down from 2.75 at 5k steps)
+- ✅ Improvement: **36% reduction in validation loss**
+- ✅ Training stability: No OOM errors, gradient checkpointing working
+
+**Tracking Quality Comparison (5k vs 50k):**
+
+Inference was run on the same validation video with both checkpoints:
+
+| Metric | 5k Checkpoint | 50k Checkpoint | Change |
+|--------|---------------|----------------|--------|
+| Validation Loss | 2.75 | 1.77 | -36% ✅ |
+| Point 0 Movement | 0.156 | 0.317 | +103.5% ✅ |
+| Point 1 Movement | 0.036 | 0.059 | +63.2% ✅ |
+| Point 2 Movement | 0.289 | 0.363 | +25.6% ✅ |
+| Point 3 Movement | 0.047 | 0.042 | -10.6% ⚠️ |
+| Point 4 Movement | 0.048 | 0.040 | -16.5% ⚠️ |
+| Temporal Consistency | 0.0828 | 0.0249 | -69.9% ⚠️ |
+
+**Assessment:**
+- ✅ Clear learning signal: Validation loss decreased significantly
+- ⚠️ Mixed tracking improvements: Some points track much better (+103%), others slightly worse
+- ⚠️ Reduced temporal dynamics: Points move less between frames (smoother but potentially less responsive)
+- 📊 Need proper benchmarking: TAP-Vid metrics required for objective evaluation
+
+**Recommendations:**
+1. **Phase 13** (Immediate): Evaluate with official TAP-Vid-3D metrics to get objective performance numbers
+2. **Phase 14** (Next): Add real-world datasets (PointOdyssey, Co3Dv2) for better generalization
+3. **Phase 15** (After): Continue training to 100k-200k steps with multi-dataset mix
+
+**Files:**
+- Checkpoint: `checkpoints/checkpoint_step_0050000.pth` (1.5 GB)
+- Results: `results/tracking_50k.npz`
+- Visualization: `results/tracking_50k.mp4`
+- Log: `logs/train_50k_movi.log`
+
+---
+
+## 🎯 Phase 12c-16: Continue Path to Paper Performance (CURRENT)
 
 **Goal:** Match D4RT paper performance on public benchmarks (TAPVid-3D).
 
@@ -103,12 +145,12 @@
 
 **See detailed roadmap:** `ROADMAP_TO_PAPER_PERFORMANCE.md`
 
-**Immediate next steps:**
-1. Download full MOVi-A dataset (9,703 samples)
-2. Train for 50k steps on full dataset
-3. Implement TAP-Vid evaluation metrics
-4. Add real-world datasets (PointOdyssey, Co3Dv2, ScanNet)
-5. Large-scale multi-dataset training (100k-200k steps)
+**Next immediate steps:**
+1. ✅ ~~Download full MOVi-A dataset (9,703 samples)~~ DONE
+2. ✅ ~~Train for 50k steps on full dataset~~ DONE
+3. 📋 **Phase 13**: Implement TAP-Vid evaluation metrics
+4. 📋 **Phase 14**: Add real-world datasets (PointOdyssey, Co3Dv2, ScanNet)
+5. 📋 **Phase 15**: Large-scale multi-dataset training (100k-200k steps)
 
 ### What's Working:
 
