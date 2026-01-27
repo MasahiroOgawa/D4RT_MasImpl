@@ -81,6 +81,7 @@ class CrossAttentionDecoder(nn.Module):
         # Output heads
         self.xyz_head = nn.Linear(hidden_dim, 3)  # 3D position (x, y, z)
         self.vis_head = nn.Linear(hidden_dim, 1)  # Visibility logit
+        self.confidence_head = nn.Linear(hidden_dim, 1)  # Confidence score
 
         self._init_weights()
 
@@ -92,6 +93,9 @@ class CrossAttentionDecoder(nn.Module):
 
         nn.init.xavier_uniform_(self.vis_head.weight)
         nn.init.zeros_(self.vis_head.bias)
+
+        nn.init.xavier_uniform_(self.confidence_head.weight)
+        nn.init.zeros_(self.confidence_head.bias)
 
     def forward(
         self,
@@ -113,6 +117,7 @@ class CrossAttentionDecoder(nn.Module):
             outputs: Dictionary with keys:
                 - 'xyz': [B, N, 3] predicted 3D positions
                 - 'visibility': [B, N, 1] visibility logits
+                - 'confidence': [B, N, 1] confidence scores (range [0, 1])
         """
         # Project inputs
         x = self.query_proj(queries)  # [B, N, hidden_dim]
@@ -128,10 +133,12 @@ class CrossAttentionDecoder(nn.Module):
         # Output heads
         xyz = self.xyz_head(x)  # [B, N, 3]
         visibility = self.vis_head(x)  # [B, N, 1]
+        confidence = torch.sigmoid(self.confidence_head(x))  # [B, N, 1], range [0, 1]
 
         return {
             'xyz': xyz,
             'visibility': visibility,
+            'confidence': confidence,
         }
 
 

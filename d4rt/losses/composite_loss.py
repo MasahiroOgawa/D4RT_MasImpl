@@ -9,6 +9,7 @@ from .projection_2d import Projection2DLoss
 from .visibility import VisibilityLoss
 from .normal import NormalLoss
 from .motion import MotionLoss
+from .confidence import ConfidenceLoss, compute_prediction_error
 
 
 class CompositeLoss(nn.Module):
@@ -21,6 +22,7 @@ class CompositeLoss(nn.Module):
     - normal: 0.5 (surface alignment) - Updated to paper value
     - motion: 0.1 (temporal consistency)
     - visibility: 0.1 (occlusion)
+    - confidence: 0.2 (confidence weighting) - NEW from paper
     """
 
     def __init__(
@@ -42,6 +44,7 @@ class CompositeLoss(nn.Module):
             'normal': 0.5,  # Paper value (was 0.05, 10× increase)
             'motion': 0.1,
             'visibility': 0.1,
+            'confidence': 0.2,  # Paper value (NEW)
         }
 
         # Initialize loss functions
@@ -52,6 +55,7 @@ class CompositeLoss(nn.Module):
         self.visibility_loss = VisibilityLoss()
         self.normal_loss = NormalLoss()
         self.motion_loss = MotionLoss()
+        self.confidence_loss = ConfidenceLoss()
 
     def forward(
         self,
@@ -147,13 +151,31 @@ class CompositeLoss(nn.Module):
             loss_motion = torch.zeros(1, device=predictions['xyz'].device, requires_grad=True)
             loss_dict['loss_motion'] = 0.0
 
+        # 6. Confidence Loss (optional, NEW from paper)
+        if 'confidence' in predictions and 'xyz' in targets:
+            # Compute prediction error for confidence weighting
+            error = compute_prediction_error(
+                predictions['xyz'],
+                targets['xyz'],
+                error_type='l1'
+            )
+            loss_confidence = self.confidence_loss(
+                predictions['confidence'],
+                error,
+            )
+            loss_dict['loss_confidence'] = loss_confidence.item()
+        else:
+            loss_confidence = torch.zeros(1, device=predictions['xyz'].device, requires_grad=True)
+            loss_dict['loss_confidence'] = 0.0
+
         # Compute weighted total loss
         total_loss = (
             self.loss_weights['l1_3d'] * loss_3d +
             self.loss_weights['l2_2d'] * loss_2d +
             self.loss_weights['normal'] * loss_normal +
             self.loss_weights['motion'] * loss_motion +
-            self.loss_weights['visibility'] * loss_vis
+            self.loss_weights['visibility'] * loss_vis +
+            self.loss_weights.get('confidence', 0.0) * loss_confidence
         )
 
         loss_dict['loss_total'] = total_loss.item()
