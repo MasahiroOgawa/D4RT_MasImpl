@@ -232,18 +232,27 @@ class KubricDataset(BaseVideoDataset):
         if tracks_file.exists():
             try:
                 tracks_data = np.load(tracks_file)
-                # tracks.npz contains: 'tracks' [N_tracks, T, 2] in pixel coordinates
-                all_tracks = torch.from_numpy(tracks_data['tracks']).float()  # [N_tracks, T, 2]
-                N_tracks = all_tracks.shape[0]
-
-                # Sample num_queries tracks (or fewer if not enough tracks)
-                num_queries = len(queries['u'])
-                if N_tracks >= num_queries:
-                    track_indices = torch.randperm(N_tracks)[:num_queries]
-                    tracked_positions = all_tracks[track_indices]  # [num_queries, T, 2]
+                # tracks.npz contains: 'tracks_2d' [N_tracks, T, 2] in pixel coordinates
+                # Check for both 'tracks_2d' (TAP-Vid format) and 'tracks' (fallback)
+                if 'tracks_2d' in tracks_data:
+                    all_tracks = torch.from_numpy(tracks_data['tracks_2d']).float()  # [N_tracks, T, 2]
+                elif 'tracks' in tracks_data:
+                    all_tracks = torch.from_numpy(tracks_data['tracks']).float()  # [N_tracks, T, 2]
                 else:
-                    # Not enough tracks - use what we have
-                    tracked_positions = all_tracks[:num_queries]  # [min(N_tracks, num_queries), T, 2]
+                    print(f"Warning: No tracks_2d or tracks found in {tracks_file}")
+                    all_tracks = None
+
+                if all_tracks is not None:
+                    N_tracks = all_tracks.shape[0]
+
+                    # Sample num_queries tracks (or fewer if not enough tracks)
+                    num_queries = len(queries['u'])
+                    if N_tracks >= num_queries:
+                        track_indices = torch.randperm(N_tracks)[:num_queries]
+                        tracked_positions = all_tracks[track_indices]  # [num_queries, T, 2]
+                    else:
+                        # Not enough tracks - use what we have
+                        tracked_positions = all_tracks[:num_queries]  # [min(N_tracks, num_queries), T, 2]
             except Exception as e:
                 print(f"Warning: Failed to load tracks from {tracks_file}: {e}")
                 tracked_positions = None

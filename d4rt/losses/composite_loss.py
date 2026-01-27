@@ -38,7 +38,7 @@ class CompositeLoss(nn.Module):
         super().__init__()
 
         # Default weights from paper
-        self.loss_weights = loss_weights or {
+        default_weights = {
             'l1_3d': 1.0,
             'l2_2d': 0.1,
             'normal': 0.5,  # Paper value (was 0.05, 10× increase)
@@ -46,6 +46,12 @@ class CompositeLoss(nn.Module):
             'visibility': 0.1,
             'confidence': 0.2,  # Paper value (NEW)
         }
+
+        # Merge custom weights with defaults
+        if loss_weights:
+            self.loss_weights = {**default_weights, **loss_weights}
+        else:
+            self.loss_weights = default_weights
 
         # Initialize loss functions
         # Use paper formula by default for 3D loss (can be overridden via config)
