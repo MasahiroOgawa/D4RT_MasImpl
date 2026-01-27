@@ -26,6 +26,8 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 from tqdm import tqdm
 import json
+from multiprocessing import Pool, cpu_count
+from functools import partial
 
 
 def sample_points_from_segmentation(
@@ -197,7 +199,7 @@ def track_points_simple(
     return tracks_2d, tracks_3d, visibility
 
 
-def add_tracks_to_scene(scene_idx, output_dir, split, num_points=256):
+def add_tracks_to_scene(scene_idx, output_dir, split, num_points=256, skip_existing=True, verbose=False):
     """Add point tracks to a single MOVi scene
 
     Args:
@@ -205,19 +207,31 @@ def add_tracks_to_scene(scene_idx, output_dir, split, num_points=256):
         output_dir: Base output directory
         split: Dataset split (train/val)
         num_points: Number of points to track
+        skip_existing: Skip if tracks.npz already exists
+        verbose: Print progress messages
     """
     scene_dir = Path(output_dir) / split / f"scene_{scene_idx:05d}"
 
     if not scene_dir.exists():
-        print(f"⚠ Scene directory not found: {scene_dir}")
+        if verbose:
+            print(f"⚠ Scene directory not found: {scene_dir}")
         return False
 
+    # Check if tracks already exist
+    tracks_file = scene_dir / 'tracks.npz'
+    if skip_existing and tracks_file.exists():
+        return True  # Already processed
+
     # Load MOVi sample from TensorFlow Datasets
-    print(f"  Loading scene {scene_idx} from TFDS...")
+    if verbose:
+        print(f"  Loading scene {scene_idx} from TFDS...")
+
+    # Map split name for TFDS
+    tfds_split = 'validation' if split == 'val' else 'train'
 
     ds = tfds.load(
         'movi_a/256x256',
-        split=f'validation[{scene_idx}:{scene_idx+1}]',
+        split=f'{tfds_split}[{scene_idx}:{scene_idx+1}]',
         data_dir='gs://kubric-public/tfds',
         try_gcs=True
     )
@@ -249,7 +263,8 @@ def add_tracks_to_scene(scene_idx, output_dir, split, num_points=256):
     T, H, W, _ = video.shape
 
     # Sample query points from first frame
-    print(f"  Sampling {num_points} query points...")
+    if verbose:
+        print(f"  Sampling {num_points} query points...")
     query_points, query_obj_ids, query_obj_coords = sample_points_from_segmentation(
         segmentations[0],
         object_coordinates[0],
@@ -258,7 +273,8 @@ def add_tracks_to_scene(scene_idx, output_dir, split, num_points=256):
     )
 
     # Track points across frames
-    print(f"  Tracking {len(query_points)} points across {T} frames...")
+    if verbose:
+        print(f"  Tracking {len(query_points)} points across {T} frames...")
     tracks_2d, tracks_3d, visibility = track_points_simple(
         query_obj_ids,
         query_obj_coords,
@@ -280,8 +296,9 @@ def add_tracks_to_scene(scene_idx, output_dir, split, num_points=256):
         intrinsics=intrinsics[0],  # [3, 3] (same for all frames in MOVi)
     )
 
-    print(f"  ✓ Saved {len(query_points)} tracks to {tracks_file}")
-    print(f"    Visible points: {np.sum(visibility > 0.5)}/{visibility.size} ({100*np.mean(visibility):.1f}%)")
+    if verbose:
+        print(f"  ✓ Saved {len(query_points)} tracks to {tracks_file}")
+        print(f"    Visible points: {np.sum(visibility > 0.5)}/{visibility.size} ({100*np.mean(visibility):.1f}%)")
 
     return True
 
@@ -313,8 +330,31 @@ def main():
         default=256,
         help="Number of points to track per scene"
     )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=1,
+        help="Number of parallel workers (default: 1, use -1 for all CPUs)"
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        default=True,
+        help="Skip scenes that already have tracks"
+    )
+    parser.add_argument(
+        "--start-idx",
+        type=int,
+        default=0,
+        help="Start from scene index (for resuming)"
+    )
 
     args = parser.parse_args()
+
+    # Determine number of workers
+    if args.num_workers == -1:
+        args.num_workers = cpu_count()
+    num_workers = max(1, args.num_workers)
 
     # Find all scenes
     split_dir = Path(args.data_dir) / args.split
@@ -324,24 +364,57 @@ def main():
 
     scene_dirs = sorted([d for d in split_dir.iterdir() if d.is_dir()])
 
+    # Apply start index filter
+    if args.start_idx > 0:
+        scene_dirs = [d for d in scene_dirs if int(d.name.split('_')[1]) >= args.start_idx]
+
     if args.num_samples:
         scene_dirs = scene_dirs[:args.num_samples]
 
     print(f"🔄 Adding point tracks to {len(scene_dirs)} scenes...")
     print(f"   Split: {args.split}")
     print(f"   Points per scene: {args.num_points}")
+    print(f"   Workers: {num_workers}")
+    print(f"   Skip existing: {args.skip_existing}")
+    if args.start_idx > 0:
+        print(f"   Starting from scene: {args.start_idx}")
     print()
 
-    success_count = 0
-    for scene_dir in tqdm(scene_dirs, desc="Processing scenes"):
-        scene_idx = int(scene_dir.name.split('_')[1])
+    # Extract scene indices
+    scene_indices = [int(d.name.split('_')[1]) for d in scene_dirs]
 
-        try:
-            if add_tracks_to_scene(scene_idx, args.data_dir, args.split, args.num_points):
-                success_count += 1
-        except Exception as e:
-            print(f"\n⚠ Error processing scene {scene_idx}: {e}")
-            continue
+    # Create worker function with fixed parameters
+    worker_fn = partial(
+        add_tracks_to_scene,
+        output_dir=args.data_dir,
+        split=args.split,
+        num_points=args.num_points,
+        skip_existing=args.skip_existing,
+        verbose=(num_workers == 1)  # Only verbose in single-threaded mode
+    )
+
+    # Process scenes (with or without multiprocessing)
+    if num_workers > 1:
+        # Multiprocessing
+        with Pool(num_workers) as pool:
+            results = list(tqdm(
+                pool.imap(worker_fn, scene_indices),
+                total=len(scene_indices),
+                desc="Processing scenes"
+            ))
+        success_count = sum(results)
+    else:
+        # Single-threaded with better error handling
+        success_count = 0
+        for scene_idx in tqdm(scene_indices, desc="Processing scenes"):
+            try:
+                if worker_fn(scene_idx):
+                    success_count += 1
+            except Exception as e:
+                print(f"\n⚠ Error processing scene {scene_idx}: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
 
     print(f"\n✓ Successfully added tracks to {success_count}/{len(scene_dirs)} scenes")
     print(f"\nNext step: Run TAP-Vid evaluation")

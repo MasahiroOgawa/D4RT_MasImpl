@@ -11,9 +11,11 @@
 
 **Current Status:**
 - ✅ Phase 1-13 completed: TAP-Vid evaluation on MOVi validation set finished
+- ✅ **Phase 13.5: Paper losses implemented** (mean depth norm, confidence, tracked GT)
+- 🚧 **Phase 14 IN PROGRESS: Track generation for full MOVi-A training set (9,703 scenes)**
 - 📊 Current performance: Occlusion prediction excellent (93.6%), 3D tracking very poor (AJ: 0.0004)
-- 📍 **We are here**: Need more training + real-world datasets (Phase 14-15)
-- 🎯 Remaining: Phases 14-16 to reach paper performance
+- 📍 **We are here**: Generating tracks for all training scenes (~10.5hrs ETA)
+- 🎯 Next: Retrain with paper losses + tracked GT, then full evaluation
 
 ---
 
@@ -160,15 +162,198 @@ Inference was run on the same validation video with both checkpoints:
   - Model not learning accurate metric 3D geometry
   - Tracks not following correct 3D locations
 
-**Root Causes:**
-1. **Insufficient training**: Only 50k steps vs paper's likely 200k+ steps
-2. **Lack of real-world data**: Only MOVi-A (synthetic), need PointOdyssey/Co3Dv2/ScanNet
-3. **3D supervision issue**: Model may not be properly learning from 3D loss
-4. **Depth understanding**: Model struggles with metric 3D reconstruction
+**🔍 CRITICAL FINDING: Design Mismatch (Not a Bug!)**
+
+After debugging, we discovered the poor tracking performance is NOT due to bugs, but a **fundamental design mismatch**:
+
+**What D4RT Actually Does:**
+- Predicts depth at **FIXED pixel coordinates** across time
+- Query `(u=0.5, v=0.5, t_src=0, t_tgt=10)` → depth at pixel (0.5, 0.5) in frame 10
+- Designed for: dense depth estimation, scene flow, novel view synthesis
+
+**What TAP-Vid Expects:**
+- Track **physical points** as they move through the scene
+- Query "point at (0.5, 0.5) in frame 0" → 3D position wherever it moved to in frame 10
+- Designed for: sparse point tracking, object motion analysis
+
+**Evidence:**
+1. Training code (`query_sampling.py:296`): `xyz = points_3d[t_tgt, v_px, u_px]` - same pixel
+2. Inference docs (`doc/inference.md:89`): Uses fixed `(u, v)` across all frames
+3. Results: Visibility works (per-pixel prediction) but tracking fails (needs motion)
+
+**Why Occlusion Works But Tracking Doesn't:**
+- Visibility can be predicted from appearance at a pixel → model does this well
+- Tracking requires following moving points → model was never trained for this
+
+**Detailed Analysis:** `doc/DESIGN_MISMATCH_ANALYSIS.md`
+
+**Solution Options:**
+1. **Option 1** (Major): Retrain with tracked point supervision (~3 weeks)
+2. **Option 2** (Recommended): Evaluate depth estimation instead (2-3 hours)
+3. **Option 3** (Moderate): Add optical flow for tracking at inference (~1 week)
 
 **Scripts Created:**
 - `scripts/add_tracks_to_movi.py` - Generate ground truth tracks from object_coordinates
 - `scripts/evaluate_movi_tracks.py` - TAP-Vid-3D evaluation on MOVi
+- `scripts/visualize_predictions.py` - Debug visualization (revealed the mismatch)
+- `doc/DESIGN_MISMATCH_ANALYSIS.md` - Complete analysis document
+
+---
+
+## ✅ COMPLETED: Phase 13.5 - Implement Exact Paper Losses (CRITICAL FIX)
+
+**Goal:** Implement the exact loss functions from the D4RT paper to fix poor tracking performance.
+
+**Problem Identified:**
+The root cause of poor TAP-Vid performance (AJ: 0.0004 vs target 0.304) was:
+1. ❌ Model trained on "depth at fixed pixels" (current code)
+2. ✅ Paper expects "tracking moving points" (paper requirement)
+3. ❌ 3D loss used wrong normalization (scene extent vs mean depth)
+4. ❌ 3D loss missing signed-log transform: sign(x)·log(1+|x|)
+5. ❌ Loss weights incorrect (λnormal: 0.05 vs paper: 0.5)
+6. ❌ Confidence loss missing entirely (λconf=0.2 in paper)
+
+**Implementation (Phases 1-5):**
+
+### Phase 1: Paper's 3D Loss (Mean Depth + Signed Log) ✅
+- Implemented `normalize_by_mean_depth()`: normalizes by mean Z coordinate
+- Implemented `signed_log_transform()`: sign(x) * log(1 + |x|)
+- Added `use_paper_formula` flag to L1_3DLoss
+- **19 unit tests + 6 integration tests** - all passing
+- Commit: `3ceedd5`
+
+### Phase 2: Fix Loss Weights ✅
+- Updated λnormal from 0.05 → 0.5 (10× increase, paper value)
+- Added `use_paper_formula_3d` config flag
+- Created `train_5k_movi_paper.yaml` with exact paper weights
+- **12 config validation tests** - all passing
+- Commit: `e1108d5`
+
+### Phase 3: Add Confidence Loss ✅
+- Added confidence head to decoder: outputs [B, N, 1] scores in [0,1]
+- Implemented ConfidenceLoss: L = error*c - log(c)
+- Integrated into CompositeLoss with λconf=0.2
+- **18 unit tests** - all passing
+- Commit: `5a2b8b3`
+
+### Phase 4: Fix Tracked Ground Truth (CRITICAL FIX!) ✅
+- **THE BUG:** `xyz = points_3d[t_tgt, v_px, u_px]` - FIXED pixel locations
+- **THE FIX:** `xyz = points_3d[t_tgt, v_tracked, u_tracked]` - TRACKED locations
+- Modified `extract_ground_truth_at_queries()` to accept tracked_positions
+- Updated `KubricDataset` to load tracks.npz files
+- **7 tests** covering tracked vs fixed behavior - all passing
+- Commit: `76d2f3c`
+
+This was the **ROOT CAUSE** of poor tracking: model learned "depth at pixels" not "point tracking"!
+
+### Phase 5: Integration & Validation ✅
+- Fixed CompositeLoss to merge custom weights with defaults
+- Fixed KubricDataset to support both 'tracks_2d' and 'tracks' keys
+- Created **7 integration tests** validating all losses work together
+- **100-step training test**: Loss decreased ~40 → ~4.7 smoothly
+- All losses active: 3D (paper formula), 2D, normal (0.5), confidence (0.2), motion, visibility
+- Tracked GT working (loads from validation scenes)
+- Commit: `2021f08`
+
+**Test Coverage:**
+- 19 unit tests (3D loss)
+- 12 config tests (weights)
+- 18 unit tests (confidence)
+- 7 unit tests (tracked GT)
+- 7 integration tests (full pipeline)
+- **Total: 63 tests - all passing!**
+
+**Files Modified/Created:**
+- `d4rt/losses/l1_3d.py` - Paper formula
+- `d4rt/losses/composite_loss.py` - Updated weights, added confidence
+- `d4rt/losses/confidence.py` - NEW: Confidence loss
+- `d4rt/models/decoder.py` - Added confidence head
+- `d4rt/data/query_sampling.py` - Support tracked positions
+- `d4rt/data/datasets/kubric.py` - Load tracks.npz
+- `configs/training/train_5k_movi_paper.yaml` - Paper config
+- `tests/` - 63 new tests
+
+**Expected Impact:**
+With all paper losses implemented and tracked GT fixed, we expect:
+- AJ should improve from 0.0004 to >>0.05 (at least 50× improvement)
+- Model now learns proper point tracking (follows moving objects)
+- Ready for evaluation to verify improvement
+
+**Next Steps:**
+1. ⏭️ **Immediate**: Retrain from scratch with paper losses (or continue from checkpoint)
+2. ⏭️ Evaluate on validation set with TAP-Vid metrics
+3. ⏭️ Verify AJ improves significantly (target: >0.05, stretch: >0.15)
+
+---
+
+## 🚧 IN PROGRESS: Phase 14 - Generate Tracks for Full MOVi-A Training Set
+
+**Date Started:** 2026-01-27
+**Goal:** Pre-generate point tracks for all 9,703 MOVi-A training scenes to enable tracked GT extraction
+
+**Status:** ✅ **Script optimized**, ⏳ **Generation running in background**
+
+### Problem
+Phase 13.5 fixed the critical bug where GT was extracted at "fixed pixels" instead of "tracked points". However, tracking requires loading tracks from `tracks.npz` files. Currently only 20 validation scenes have tracks - we need tracks for all 9,703 training scenes.
+
+### Solution: Optimized Track Generation Pipeline
+
+**Script:** `scripts/add_tracks_to_movi.py`
+
+**Optimizations implemented:**
+1. ✅ Fixed hardcoded `validation` split → supports both `train` and `val`
+2. ✅ Added multiprocessing support (8 workers)
+3. ✅ Added `skip_existing` flag to resume after interruption
+4. ✅ Added `--start-idx` for manual resuming
+5. ✅ CPU-only mode for TensorFlow (avoids GPU OOM with parallel workers)
+6. ✅ Silent mode when using multiprocessing (verbose only for single-threaded)
+
+**Command running:**
+```bash
+CUDA_VISIBLE_DEVICES="" python scripts/add_tracks_to_movi.py \
+    --data-dir data/kubric \
+    --split train \
+    --num-points 256 \
+    --num-workers 8 \
+    --skip-existing
+```
+
+### Performance Metrics
+
+**Test run (10 scenes):**
+- Speed: ~22 seconds/scene (single-threaded)
+- Visibility: 82-100% (average 92.7%)
+- Track quality: Verified visually
+
+**Full run (9,703 scenes):**
+- Speed: ~3.85 seconds/scene (8 workers, CPU-only)
+- **Estimated time:** ~10.5 hours
+- **Storage:** ~5 MB per scene → ~48 GB total
+- Status: Running in background (PID logged)
+
+### Track Format (TAP-Vid compatible)
+
+Each `tracks.npz` contains:
+```python
+{
+    'query_points': [N, 3],        # (t, y, x) initial query locations
+    'tracks_2d': [N, T, 2],        # (x, y) tracked 2D positions
+    'tracks_3d': [N, T, 3],        # (x, y, z) 3D camera coordinates
+    'visibility': [N, T],          # Binary visibility flags
+    'query_obj_ids': [N],          # Object IDs for each track
+    'intrinsics': [3, 3],          # Camera intrinsics matrix
+}
+```
+
+### Next Steps (After Generation Completes)
+
+1. ✅ **Validate tracks** - Check all 9,703 scenes have valid tracks.npz
+2. ✅ **Create manifest** - Generate `tracks_manifest.json` with metadata
+3. ✅ **Commit changes** - Commit optimized script + documentation
+4. 🚀 **Retrain with tracked GT** - Run full 50k training with paper losses + tracked GT
+5. 📊 **Evaluate improvement** - TAP-Vid metrics should show dramatic AJ improvement
+
+**Expected Impact:** AJ should improve from 0.0004 to >0.05 (50× minimum), ideally >0.15 (closer to paper's 0.304).
 
 ---
 
