@@ -11,15 +11,47 @@ class L1_3DLoss(nn.Module):
     This is the primary supervision signal for D4RT.
     """
 
-    def __init__(self, normalize_by_scene: bool = True):
+    def __init__(self, normalize_by_scene: bool = True, use_paper_formula: bool = False):
         """
         Initialize L1 3D loss.
 
         Args:
-            normalize_by_scene: If True, normalize by scene scale for scale invariance
+            normalize_by_scene: If True, normalize by scene scale for scale invariance (old method)
+            use_paper_formula: If True, use paper's exact formula (mean depth + signed log)
         """
         super().__init__()
         self.normalize_by_scene = normalize_by_scene
+        self.use_paper_formula = use_paper_formula
+
+    def normalize_by_mean_depth(self, xyz: torch.Tensor) -> torch.Tensor:
+        """
+        Normalize coordinates by mean depth (Z value).
+
+        Args:
+            xyz: [B, N, 3] coordinates
+
+        Returns:
+            normalized: [B, N, 3] coordinates normalized by mean Z
+        """
+        # Get mean depth per batch
+        mean_depth = xyz[..., 2:3].mean(dim=1, keepdim=True)  # [B, 1, 1]
+        # Normalize all coordinates by mean depth
+        normalized = xyz / (mean_depth + 1e-8)
+        return normalized
+
+    def signed_log_transform(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Apply signed log transform: sign(x) * log(1 + |x|)
+
+        This transform compresses the range while preserving sign and ordering.
+
+        Args:
+            x: Input tensor
+
+        Returns:
+            transformed: sign(x) * log(1 + |x|)
+        """
+        return torch.sign(x) * torch.log(1 + torch.abs(x))
 
     def forward(
         self,
@@ -38,8 +70,21 @@ class L1_3DLoss(nn.Module):
         Returns:
             loss: Scalar loss value
         """
-        if self.normalize_by_scene and scene_bounds is not None:
-            # Compute scene scale
+        if self.use_paper_formula:
+            # Paper's exact formula:
+            # 1. Normalize by mean depth
+            pred_norm = self.normalize_by_mean_depth(pred_xyz)
+            gt_norm = self.normalize_by_mean_depth(gt_xyz)
+
+            # 2. Apply signed log transform
+            pred_transformed = self.signed_log_transform(pred_norm)
+            gt_transformed = self.signed_log_transform(gt_norm)
+
+            # 3. Compute L1 loss
+            loss = torch.abs(pred_transformed - gt_transformed).mean()
+
+        elif self.normalize_by_scene and scene_bounds is not None:
+            # Old method: Compute scene scale
             scene_scale = (scene_bounds[:, 1::2] - scene_bounds[:, 0::2]).max(dim=1)[0]  # [B]
             scene_scale = scene_scale.view(-1, 1, 1)  # [B, 1, 1]
 
