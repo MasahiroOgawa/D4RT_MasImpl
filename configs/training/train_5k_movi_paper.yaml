@@ -1,0 +1,72 @@
+# Training configuration for 5k steps on MOVi-A with exact paper losses
+# Uses paper formula for 3D loss and correct loss weights from D4RT paper
+
+defaults:
+  - /model: vit_b_movi
+
+experiment_name: d4rt_train_5k_movi_paper
+seed: 42
+model: vit_b_movi
+
+training:
+  max_steps: 5000
+  batch_size: 1  # Keep at 1 for memory
+  num_workers: 0  # Disable multiprocessing for debugging
+  gradient_accumulation_steps: 4  # Effective batch size of 4
+  mixed_precision: false  # DISABLED: fp16 may cause overflow to inf
+  gradient_checkpointing: true  # Enable to reduce memory
+  clip_grad_norm: 0.5  # Stronger clipping to prevent explosion
+  log_every_n_steps: 50
+  val_every_n_steps: 500
+  save_every_n_steps: 1000
+  num_queries_per_step: 64  # Reduced for memory optimization
+
+optimizer:
+  type: adamw
+  lr: 1e-5  # Reduced 10x to prevent explosion
+  betas: [0.9, 0.999]
+  eps: 1e-8
+  weight_decay: 0.01  # Reduced weight decay
+
+scheduler:
+  type: cosine
+  warmup_steps: 100
+  T_max: 5000
+  eta_min: 1e-6
+
+# Loss weights matching D4RT paper exactly
+loss_weights:
+  l1_3d: 1.0                    # Primary 3D position loss
+  l2_2d: 0.1                    # 2D reprojection loss
+  normal: 0.5                   # Surface normal loss (paper value, was 0.0)
+  motion: 0.1                   # Temporal motion consistency
+  visibility: 0.1               # Occlusion handling
+  use_paper_formula_3d: true    # Enable paper's mean depth + signed log transform
+
+dataset:
+  name: kubric
+  data_dir: data/kubric
+  num_frames: 24
+  resolution: [256, 256]
+  train_split: train
+  val_split: val
+  augmentation: {}
+
+query_sampling:
+  num_queries: 128
+  visible_ratio: 0.5
+  occluded_ratio: 0.25
+  random_ratio: 0.25
+  temporal_sampling: uniform
+
+logging:
+  use_wandb: false
+  wandb_project: d4rt
+  wandb_entity: null
+  log_dir: logs
+  save_dir: checkpoints
+
+hardware:
+  num_gpus: 1
+  device: cuda
+  precision: 32

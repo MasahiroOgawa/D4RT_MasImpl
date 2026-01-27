@@ -18,7 +18,7 @@ class CompositeLoss(nn.Module):
     Default weights from paper:
     - l1_3d: 1.0 (primary supervision)
     - l2_2d: 0.1 (reprojection)
-    - normal: 0.05 (surface alignment)
+    - normal: 0.5 (surface alignment) - Updated to paper value
     - motion: 0.1 (temporal consistency)
     - visibility: 0.1 (occlusion)
     """
@@ -39,13 +39,15 @@ class CompositeLoss(nn.Module):
         self.loss_weights = loss_weights or {
             'l1_3d': 1.0,
             'l2_2d': 0.1,
-            'normal': 0.05,
+            'normal': 0.5,  # Paper value (was 0.05, 10× increase)
             'motion': 0.1,
             'visibility': 0.1,
         }
 
         # Initialize loss functions
-        self.l1_3d_loss = L1_3DLoss(normalize_by_scene=True)
+        # Use paper formula by default for 3D loss (can be overridden via config)
+        use_paper_formula = loss_weights.get('use_paper_formula_3d', True) if loss_weights else True
+        self.l1_3d_loss = L1_3DLoss(use_paper_formula=use_paper_formula)
         self.projection_2d_loss = Projection2DLoss(loss_type='l2')
         self.visibility_loss = VisibilityLoss()
         self.normal_loss = NormalLoss()
