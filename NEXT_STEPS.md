@@ -10,10 +10,10 @@
 - Speed: **18-300× faster than prior methods**
 
 **Current Status:**
-- ✅ Phase 1-12b completed: 50k training on full MOVi-A (9,703 samples) finished
-- 📊 Current performance: Validation loss improved 36%, tracking quality shows moderate improvements
-- 📍 **We are here**: Ready for Phase 13 (TAP-Vid evaluation) or Phase 14-15 (more data/training)
-- 🎯 Remaining: Phases 13-16 to reach paper performance
+- ✅ Phase 1-13 completed: TAP-Vid evaluation on MOVi validation set finished
+- 📊 Current performance: Occlusion prediction excellent (93.6%), 3D tracking very poor (AJ: 0.0004)
+- 📍 **We are here**: Need more training + real-world datasets (Phase 14-15)
+- 🎯 Remaining: Phases 14-16 to reach paper performance
 
 ---
 
@@ -27,7 +27,7 @@
 
 **Phases 12-16: Scale to Paper Performance** 🚧 IN PROGRESS
 - ✅ Scale up training (50k steps on full MOVi-A)
-- 📋 Implement proper evaluation metrics (Phase 13)
+- ✅ Implement proper evaluation metrics (Phase 13)
 - 📋 Add real-world datasets (Phase 14)
 - 📋 Large-scale multi-dataset training (Phase 15)
 - 📋 Match paper benchmarks (Phase 16)
@@ -134,7 +134,45 @@ Inference was run on the same validation video with both checkpoints:
 
 ---
 
-## 🎯 Phase 12c-16: Continue Path to Paper Performance (CURRENT)
+## ✅ COMPLETED: Phase 13 - TAP-Vid Evaluation on MOVi
+
+**Implementation:**
+- ✅ Created point track generation from MOVi object_coordinates
+- ✅ Sampled ~256 query points per scene from object segmentation
+- ✅ Generated ground truth 3D tracks from depth maps
+- ✅ Implemented TAP-Vid-3D evaluation with official metrics
+- ✅ Evaluated 50k checkpoint on 20 validation scenes
+
+**Results on MOVi Validation (50k checkpoint):**
+
+| Metric | Our Model | Paper Target | Performance |
+|--------|-----------|--------------|-------------|
+| Average Jaccard (AJ) | 0.0004 | 0.304 | 0.1% of target ❌ |
+| APD3D (% within 0.05m) | 0.0007 | 0.410 | 0.2% of target ❌ |
+| Occlusion Accuracy | 93.6% | 87.5% | 107% of target ✅ |
+
+**Assessment:**
+- ✅ **Occlusion prediction is EXCELLENT** (better than paper!)
+  - Model successfully predicts visibility/occlusion at 93.6% accuracy
+  - Binary classification working well
+- ❌ **3D position tracking is VERY POOR**
+  - Average Jaccard near zero (800× below target)
+  - Model not learning accurate metric 3D geometry
+  - Tracks not following correct 3D locations
+
+**Root Causes:**
+1. **Insufficient training**: Only 50k steps vs paper's likely 200k+ steps
+2. **Lack of real-world data**: Only MOVi-A (synthetic), need PointOdyssey/Co3Dv2/ScanNet
+3. **3D supervision issue**: Model may not be properly learning from 3D loss
+4. **Depth understanding**: Model struggles with metric 3D reconstruction
+
+**Scripts Created:**
+- `scripts/add_tracks_to_movi.py` - Generate ground truth tracks from object_coordinates
+- `scripts/evaluate_movi_tracks.py` - TAP-Vid-3D evaluation on MOVi
+
+---
+
+## 🎯 Phase 14-16: Continue Path to Paper Performance (CURRENT)
 
 **Goal:** Match D4RT paper performance on public benchmarks (TAPVid-3D).
 
