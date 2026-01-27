@@ -260,9 +260,15 @@ def extract_ground_truth_at_queries(
     cameras_intrinsics: torch.Tensor,  # [T, 3, 3]
     cameras_extrinsics: torch.Tensor,  # [T, 4, 4]
     normals: Optional[torch.Tensor] = None,  # [T, H, W, 3]
+    tracked_positions: Optional[torch.Tensor] = None,  # [N, T, 2] tracked (u, v) coords
 ) -> Dict[str, torch.Tensor]:
     """
     Extract ground truth values at query locations.
+
+    CRITICAL: This function now supports tracked point positions. If tracked_positions
+    is provided, ground truth is extracted at TRACKED pixel locations (following moving
+    objects), not at FIXED pixel locations. This is essential for proper point tracking
+    as described in the D4RT paper.
 
     Args:
         queries: Dictionary with query coordinates
@@ -271,6 +277,7 @@ def extract_ground_truth_at_queries(
         cameras_intrinsics: [T, 3, 3] camera intrinsics
         cameras_extrinsics: [T, 4, 4] camera extrinsics
         normals: [T, H, W, 3] surface normals (optional)
+        tracked_positions: [N, T, 2] tracked (u, v) pixel coordinates (CRITICAL FIX)
 
     Returns:
         targets: Dictionary with ground truth values
@@ -278,25 +285,38 @@ def extract_ground_truth_at_queries(
     num_queries = len(queries['u'])
     T, H, W, _ = points_3d.shape
 
-    # Convert normalized coordinates to pixel indices
-    u_px = (queries['u'] * (W - 1)).long()
-    v_px = (queries['v'] * (H - 1)).long()
+    # Convert normalized coordinates to pixel indices (source frame)
+    u_px_src = (queries['u'] * (W - 1)).long()
+    v_px_src = (queries['v'] * (H - 1)).long()
     t_src = queries['t_src'].long()
     t_tgt = queries['t_tgt'].long()
     t_cam = queries['t_cam'].long()
 
     # Clamp to valid range
-    u_px = torch.clamp(u_px, 0, W - 1)
-    v_px = torch.clamp(v_px, 0, H - 1)
+    u_px_src = torch.clamp(u_px_src, 0, W - 1)
+    v_px_src = torch.clamp(v_px_src, 0, H - 1)
     t_src = torch.clamp(t_src, 0, T - 1)
     t_tgt = torch.clamp(t_tgt, 0, T - 1)
     t_cam = torch.clamp(t_cam, 0, T - 1)
 
     # Extract 3D positions
-    xyz = points_3d[t_tgt, v_px, u_px]  # [N, 3]
+    # CRITICAL FIX: Use tracked positions if available, otherwise fall back to fixed pixels
+    if tracked_positions is not None:
+        # Use tracked positions: extract GT at TRACKED pixel locations
+        xyz = []
+        for i in range(num_queries):
+            t_i = t_tgt[i]
+            # Get tracked pixel coordinates at target time [u, v] in pixels
+            u_track = torch.clamp(tracked_positions[i, t_i, 0].long(), 0, W - 1)
+            v_track = torch.clamp(tracked_positions[i, t_i, 1].long(), 0, H - 1)
+            xyz.append(points_3d[t_i, v_track, u_track])
+        xyz = torch.stack(xyz, dim=0)  # [N, 3]
+    else:
+        # OLD BEHAVIOR: Fixed pixels (BUG - doesn't track moving objects!)
+        xyz = points_3d[t_tgt, v_px_src, u_px_src]  # [N, 3]
 
-    # Extract visibility
-    vis = visibility[t_src, v_px, u_px].float()  # [N]
+    # Extract visibility (always from source frame)
+    vis = visibility[t_src, v_px_src, u_px_src].float()  # [N]
 
     # Project to 2D for 2D loss
     uv_2d = []
@@ -314,7 +334,7 @@ def extract_ground_truth_at_queries(
             uv_proj = uv_proj[:, :2] / uv_proj[:, 2:3]  # [1, 2]
             uv_2d.append(uv_proj[0])
         else:
-            uv_2d.append(torch.tensor([u_px[i].float(), v_px[i].float()]))
+            uv_2d.append(torch.tensor([u_px_src[i].float(), v_px_src[i].float()]))
 
     uv_2d = torch.stack(uv_2d, dim=0)  # [N, 2]
 
@@ -326,7 +346,18 @@ def extract_ground_truth_at_queries(
 
     # Extract normals if available
     if normals is not None:
-        normals_gt = normals[t_tgt, v_px, u_px]  # [N, 3]
+        if tracked_positions is not None:
+            # Use tracked positions for normals too
+            normals_gt = []
+            for i in range(num_queries):
+                t_i = t_tgt[i]
+                u_track = torch.clamp(tracked_positions[i, t_i, 0].long(), 0, W - 1)
+                v_track = torch.clamp(tracked_positions[i, t_i, 1].long(), 0, H - 1)
+                normals_gt.append(normals[t_i, v_track, u_track])
+            normals_gt = torch.stack(normals_gt, dim=0)  # [N, 3]
+        else:
+            # OLD BEHAVIOR: Fixed pixels
+            normals_gt = normals[t_tgt, v_px_src, u_px_src]  # [N, 3]
         targets['normals'] = normals_gt
 
     return targets
