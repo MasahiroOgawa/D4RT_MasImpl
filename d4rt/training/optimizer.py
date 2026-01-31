@@ -14,6 +14,9 @@ def build_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.opt
     """
     Build optimizer from config.
 
+    Supports parameter group-specific learning rates for cross-attention
+    Q/K projections (qk_lr_multiplier) to help with gradient flow.
+
     Args:
         model: Model to optimize
         config: Optimizer configuration
@@ -24,13 +27,37 @@ def build_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.opt
     optimizer_type = config.get('type', 'adamw').lower()
     lr = config.get('lr', 1e-4)
     weight_decay = config.get('weight_decay', 0.05)
+    qk_lr_multiplier = config.get('qk_lr_multiplier', 1.0)
 
-    # Get trainable parameters
-    params = [p for p in model.parameters() if p.requires_grad]
+    # Build parameter groups
+    if qk_lr_multiplier != 1.0:
+        # Separate Q/K parameters from others for higher LR
+        qk_params = []
+        other_params = []
+
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+            # Match cross-attention Q and K projections
+            if 'cross_attn' in name and ('q_proj' in name or 'k_proj' in name):
+                qk_params.append(param)
+            else:
+                other_params.append(param)
+
+        param_groups = [
+            {'params': qk_params, 'lr': lr * qk_lr_multiplier, 'name': 'qk_params'},
+            {'params': other_params, 'lr': lr, 'name': 'other_params'},
+        ]
+
+        print(f"Optimizer: Q/K params ({len(qk_params)}) LR={lr * qk_lr_multiplier:.2e}, "
+              f"Other params ({len(other_params)}) LR={lr:.2e}")
+    else:
+        # Standard single parameter group
+        param_groups = [p for p in model.parameters() if p.requires_grad]
 
     if optimizer_type == 'adamw':
         optimizer = AdamW(
-            params,
+            param_groups,
             lr=lr,
             betas=config.get('betas', (0.9, 0.999)),
             eps=config.get('eps', 1e-8),
@@ -38,7 +65,7 @@ def build_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.opt
         )
     elif optimizer_type == 'adam':
         optimizer = Adam(
-            params,
+            param_groups,
             lr=lr,
             betas=config.get('betas', (0.9, 0.999)),
             eps=config.get('eps', 1e-8),
@@ -46,7 +73,7 @@ def build_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.opt
         )
     elif optimizer_type == 'sgd':
         optimizer = SGD(
-            params,
+            param_groups,
             lr=lr,
             momentum=config.get('momentum', 0.9),
             weight_decay=weight_decay,

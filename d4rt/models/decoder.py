@@ -6,6 +6,51 @@ from typing import Optional
 from .components.attention import TransformerBlock
 
 
+class ContextPooling(nn.Module):
+    """
+    Pool context tokens to reduce count for better attention gradient flow.
+
+    When attention is computed over many tokens (e.g., 3072), the softmax
+    produces near-uniform weights with very small gradients. Pooling to
+    fewer tokens (e.g., 128) allows sharper attention patterns.
+    """
+
+    def __init__(self, input_tokens: int, output_tokens: int, embed_dim: int):
+        """
+        Initialize context pooling.
+
+        Args:
+            input_tokens: Number of input context tokens (e.g., 3072)
+            output_tokens: Number of output tokens after pooling (e.g., 128)
+            embed_dim: Embedding dimension
+        """
+        super().__init__()
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.embed_dim = embed_dim
+
+        # Learnable pooling via linear projection
+        self.pool = nn.Linear(input_tokens, output_tokens)
+        nn.init.xavier_uniform_(self.pool.weight)
+        nn.init.zeros_(self.pool.bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Pool context tokens.
+
+        Args:
+            x: [B, input_tokens, embed_dim] context features
+
+        Returns:
+            pooled: [B, output_tokens, embed_dim] pooled features
+        """
+        # x: [B, input_tokens, embed_dim]
+        x = x.transpose(1, 2)  # [B, embed_dim, input_tokens]
+        x = self.pool(x)       # [B, embed_dim, output_tokens]
+        x = x.transpose(1, 2)  # [B, output_tokens, embed_dim]
+        return x
+
+
 class CrossAttentionDecoder(nn.Module):
     """
     Cross-attention decoder that queries encoder features to predict 3D positions.
@@ -25,6 +70,8 @@ class CrossAttentionDecoder(nn.Module):
         dropout: float = 0.0,
         attention_dropout: float = 0.0,
         drop_path_rate: float = 0.1,
+        context_pool_tokens: Optional[int] = None,
+        context_input_tokens: int = 3072,
     ):
         """
         Initialize cross-attention decoder.
@@ -39,6 +86,8 @@ class CrossAttentionDecoder(nn.Module):
             dropout: Dropout rate
             attention_dropout: Attention dropout rate
             drop_path_rate: Stochastic depth rate
+            context_pool_tokens: Number of tokens after pooling (None = no pooling)
+            context_input_tokens: Number of input context tokens (default: 3072 for ViT-B)
         """
         super().__init__()
 
@@ -46,6 +95,7 @@ class CrossAttentionDecoder(nn.Module):
         self.context_dim = context_dim
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
+        self.context_pool_tokens = context_pool_tokens
 
         # Project query to hidden dimension if needed
         if query_dim != hidden_dim:
@@ -58,6 +108,16 @@ class CrossAttentionDecoder(nn.Module):
             self.context_proj = nn.Linear(context_dim, hidden_dim)
         else:
             self.context_proj = nn.Identity()
+
+        # Optional context pooling for better attention gradient flow
+        if context_pool_tokens is not None:
+            self.context_pool = ContextPooling(
+                input_tokens=context_input_tokens,
+                output_tokens=context_pool_tokens,
+                embed_dim=hidden_dim,
+            )
+        else:
+            self.context_pool = None
 
         # Stochastic depth decay rule
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, num_layers)]
@@ -122,6 +182,10 @@ class CrossAttentionDecoder(nn.Module):
         # Project inputs
         x = self.query_proj(queries)  # [B, N, hidden_dim]
         ctx = self.context_proj(context)  # [B, M, hidden_dim]
+
+        # Apply context pooling if enabled
+        if self.context_pool is not None:
+            ctx = self.context_pool(ctx)  # [B, pool_tokens, hidden_dim]
 
         # Apply decoder layers
         for layer in self.layers:
@@ -251,4 +315,6 @@ def build_decoder(config: dict) -> CrossAttentionDecoder:
         dropout=config.get('dropout', 0.0),
         attention_dropout=config.get('attention_dropout', 0.0),
         drop_path_rate=config.get('drop_path_rate', 0.1),
+        context_pool_tokens=config.get('context_pool_tokens', None),
+        context_input_tokens=config.get('context_input_tokens', 3072),
     )

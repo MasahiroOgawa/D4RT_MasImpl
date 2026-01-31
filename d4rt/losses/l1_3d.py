@@ -71,16 +71,22 @@ class L1_3DLoss(nn.Module):
             loss: Scalar loss value
         """
         if self.use_paper_formula:
-            # Paper's exact formula:
-            # 1. Normalize by mean depth
-            pred_norm = self.normalize_by_mean_depth(pred_xyz)
-            gt_norm = self.normalize_by_mean_depth(gt_xyz)
+            # Paper's formula with FIXED normalization:
+            # CRITICAL FIX: Use GT's mean depth for BOTH pred and gt
+            # (Previously each was normalized by its own mean, making loss scale-invariant)
 
-            # 2. Apply signed log transform
+            # 1. Get GT mean depth as the normalization reference
+            gt_mean_depth = gt_xyz[..., 2:3].mean(dim=1, keepdim=True)  # [B, 1, 1]
+
+            # 2. Normalize BOTH by GT's mean depth
+            pred_norm = pred_xyz / (gt_mean_depth + 1e-8)
+            gt_norm = gt_xyz / (gt_mean_depth + 1e-8)
+
+            # 3. Apply signed log transform
             pred_transformed = self.signed_log_transform(pred_norm)
             gt_transformed = self.signed_log_transform(gt_norm)
 
-            # 3. Compute L1 loss
+            # 4. Compute L1 loss
             loss = torch.abs(pred_transformed - gt_transformed).mean()
 
         elif self.normalize_by_scene and scene_bounds is not None:

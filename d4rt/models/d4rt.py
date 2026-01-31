@@ -185,6 +185,8 @@ def build_d4rt_model(config: DictConfig) -> D4RT:
         dropout=decoder_config.dropout,
         attention_dropout=decoder_config.attention_dropout,
         drop_path_rate=decoder_config.drop_path_rate,
+        context_pool_tokens=decoder_config.get('context_pool_tokens', None),
+        context_input_tokens=decoder_config.get('context_input_tokens', 3072),
     )
 
     # Create full model
@@ -238,4 +240,11 @@ def print_model_info(model: D4RT):
     print(f"Decoder: {model.decoder.num_layers} layers, "
           f"{model.decoder.hidden_dim} hidden dim")
     print(f"Number of patches: {model.encoder.num_patches}")
+
+    # Show context pooling info
+    if model.decoder.context_pool_tokens is not None:
+        print(f"\nContext Pooling: {model.encoder.num_patches} → "
+              f"{model.decoder.context_pool_tokens} tokens")
+    else:
+        print(f"\nContext Pooling: disabled (using all {model.encoder.num_patches} tokens)")
     print("=" * 60)

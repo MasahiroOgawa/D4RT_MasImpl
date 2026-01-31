@@ -143,12 +143,18 @@ def main(config: DictConfig):
 
     # Build trainer
     print("\nInitializing trainer...")
+
+    # Merge training config with optimizer and scheduler configs
+    trainer_config = OmegaConf.to_container(config.training, resolve=True)
+    trainer_config['optimizer'] = OmegaConf.to_container(config.get('optimizer', {}), resolve=True)
+    trainer_config['scheduler'] = OmegaConf.to_container(config.get('scheduler', {}), resolve=True)
+
     trainer = D4RTTrainer(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
         loss_fn=loss_fn,
-        config=OmegaConf.to_container(config.training, resolve=True),
+        config=trainer_config,
         device=device,
         logger=logger,
         distributed=distributed,
