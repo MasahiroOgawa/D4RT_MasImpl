@@ -9,6 +9,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from typing import Dict, Optional, Any
 from pathlib import Path
 import time
+import signal
 from tqdm import tqdm
 
 from .optimizer import build_optimizer, build_scheduler, GradientClipper
@@ -111,6 +112,32 @@ class D4RTTrainer:
         # Training state
         self.global_step = 0
         self.current_epoch = 0
+        self._emergency_save_requested = False
+        self._last_metrics = {}
+
+        # Setup signal handler for emergency checkpoint saves (SIGUSR1)
+        if self.is_main_process:
+            signal.signal(signal.SIGUSR1, self._handle_emergency_save_signal)
+
+    def _handle_emergency_save_signal(self, signum, frame):
+        """Handle SIGUSR1 signal for emergency checkpoint save."""
+        print(f"\n[SIGNAL] Received SIGUSR1 - Emergency checkpoint save requested at step {self.global_step}")
+        self._emergency_save_requested = True
+
+    def _check_emergency_save(self, metrics: Dict[str, float]):
+        """Check and perform emergency save if requested."""
+        if self._emergency_save_requested and self.is_main_process:
+            print(f"[EMERGENCY] Saving checkpoint at step {self.global_step}...")
+            self.checkpoint_manager.save_checkpoint(
+                model=self.model.module if self.distributed else self.model,
+                optimizer=self.optimizer,
+                scheduler=self.scheduler,
+                step=self.global_step,
+                metrics=metrics,
+                config=self.config,
+            )
+            print(f"[EMERGENCY] Checkpoint saved successfully at step {self.global_step}")
+            self._emergency_save_requested = False
 
     def train(self, resume_from: Optional[str] = None):
         """
@@ -187,6 +214,12 @@ class D4RTTrainer:
                         metrics=metrics,
                         config=self.config,
                     )
+
+            # Store metrics for emergency save
+            self._last_metrics = metrics
+
+            # Check for emergency save request (from SIGUSR1)
+            self._check_emergency_save(metrics)
 
             pbar.update(1)
             pbar.set_postfix({'loss': f"{metrics['train/loss_total']:.4f}"})
