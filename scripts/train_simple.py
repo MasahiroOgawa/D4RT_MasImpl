@@ -76,6 +76,8 @@ def main():
                        help='Path to dataset')
     parser.add_argument('--resume-from', type=str, default=None,
                        help='Resume from checkpoint')
+    parser.add_argument('--pretrained-encoder', type=str, default=None,
+                       help='Path to pretrained encoder weights (e.g., VideoMAE)')
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed')
 
@@ -119,6 +121,13 @@ def main():
     # Build model
     print("\nBuilding model...")
     model = build_d4rt_model(model_config)
+
+    # Load pretrained encoder weights if specified
+    if args.pretrained_encoder:
+        print(f"\nLoading pretrained encoder weights from: {args.pretrained_encoder}")
+        from d4rt.models.encoder import load_videomae_weights
+        missing, unexpected = load_videomae_weights(model.encoder, args.pretrained_encoder)
+        print(f"  Loaded pretrained weights (missing: {len(missing)}, skipped: {len(unexpected)})")
 
     # Print model info
     if local_rank == 0:

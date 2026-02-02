@@ -283,11 +283,11 @@ def load_videomae_weights(
         VideoMAE checkpoints can be downloaded from:
         https://github.com/MCG-NJU/VideoMAE
 
-        Key mapping:
-        - VideoMAE uses 'patch_embed.proj' -> our 'patch_embed.proj'
-        - VideoMAE uses 'pos_embed' -> our 'pos_embed' (may need interpolation)
-        - VideoMAE uses 'blocks.N.*' -> our 'blocks.N.*'
-        - VideoMAE uses 'norm.*' -> our 'norm.*'
+        Key differences from our encoder:
+        - VideoMAE keys have 'encoder.' prefix
+        - VideoMAE uses fused QKV weights (attn.qkv.weight)
+        - VideoMAE has separate q_bias/v_bias (no k_bias)
+        - VideoMAE uses sinusoidal pos_embed (not in checkpoint)
     """
     import logging
     logger = logging.getLogger(__name__)
@@ -303,101 +303,86 @@ def load_videomae_weights(
     else:
         state_dict = checkpoint
 
-    # Key mapping from VideoMAE to our encoder
-    key_mapping = {
-        # Patch embedding
-        'patch_embed.proj.weight': 'patch_embed.proj.weight',
-        'patch_embed.proj.bias': 'patch_embed.proj.bias',
-        # Positional embedding
-        'pos_embed': 'pos_embed',
-        # Final norm
-        'norm.weight': 'norm.weight',
-        'norm.bias': 'norm.bias',
-        # fc_norm (VideoMAE has this, we don't use it)
-        'fc_norm.weight': None,
-        'fc_norm.bias': None,
-        # head (classifier, we don't use it)
-        'head.weight': None,
-        'head.bias': None,
-    }
-
-    # Map transformer block keys
-    for i in range(encoder.num_layers):
-        # Self-attention
-        key_mapping[f'blocks.{i}.attn.qkv.weight'] = f'blocks.{i}.self_attn.qkv_weight'  # needs special handling
-        key_mapping[f'blocks.{i}.attn.qkv.bias'] = f'blocks.{i}.self_attn.qkv_bias'
-        key_mapping[f'blocks.{i}.attn.proj.weight'] = f'blocks.{i}.self_attn.out_proj.weight'
-        key_mapping[f'blocks.{i}.attn.proj.bias'] = f'blocks.{i}.self_attn.out_proj.bias'
-        # LayerNorms
-        key_mapping[f'blocks.{i}.norm1.weight'] = f'blocks.{i}.norm1.weight'
-        key_mapping[f'blocks.{i}.norm1.bias'] = f'blocks.{i}.norm1.bias'
-        key_mapping[f'blocks.{i}.norm2.weight'] = f'blocks.{i}.norm2.weight'
-        key_mapping[f'blocks.{i}.norm2.bias'] = f'blocks.{i}.norm2.bias'
-        # MLP
-        key_mapping[f'blocks.{i}.mlp.fc1.weight'] = f'blocks.{i}.mlp.0.weight'
-        key_mapping[f'blocks.{i}.mlp.fc1.bias'] = f'blocks.{i}.mlp.0.bias'
-        key_mapping[f'blocks.{i}.mlp.fc2.weight'] = f'blocks.{i}.mlp.3.weight'
-        key_mapping[f'blocks.{i}.mlp.fc2.bias'] = f'blocks.{i}.mlp.3.bias'
-
     # Build new state dict with mapped keys
     new_state_dict = {}
-    missing_keys = []
     unexpected_keys = []
 
     for old_key, value in state_dict.items():
-        if old_key in key_mapping:
-            new_key = key_mapping[old_key]
-            if new_key is None:
-                # Skip this key (not used in our model)
-                continue
-            elif 'qkv_weight' in new_key or 'qkv_bias' in new_key:
-                # VideoMAE uses fused QKV, we use separate Q, K, V
-                # Split the fused weight/bias
-                block_idx = new_key.split('.')[1]
-                embed_dim = encoder.embed_dim
-                if 'weight' in new_key:
+        # Only process encoder keys (VideoMAE has encoder. prefix)
+        if not old_key.startswith('encoder.'):
+            unexpected_keys.append(old_key)
+            continue
+
+        # Remove 'encoder.' prefix
+        key = old_key[8:]  # len('encoder.') = 8
+
+        # Patch embedding
+        if key == 'patch_embed.proj.weight':
+            new_state_dict['patch_embed.proj.weight'] = value
+        elif key == 'patch_embed.proj.bias':
+            new_state_dict['patch_embed.proj.bias'] = value
+
+        # Final norm
+        elif key == 'norm.weight':
+            new_state_dict['norm.weight'] = value
+        elif key == 'norm.bias':
+            new_state_dict['norm.bias'] = value
+
+        # Transformer blocks
+        elif key.startswith('blocks.'):
+            parts = key.split('.')
+            block_idx = parts[1]
+
+            # LayerNorms
+            if parts[2] == 'norm1':
+                new_key = f'blocks.{block_idx}.norm1.{parts[3]}'
+                new_state_dict[new_key] = value
+            elif parts[2] == 'norm2':
+                new_key = f'blocks.{block_idx}.norm2.{parts[3]}'
+                new_state_dict[new_key] = value
+
+            # Attention
+            elif parts[2] == 'attn':
+                if parts[3] == 'qkv' and parts[4] == 'weight':
+                    # Split fused QKV weight
                     q, k, v = value.chunk(3, dim=0)
                     new_state_dict[f'blocks.{block_idx}.self_attn.q_proj.weight'] = q
                     new_state_dict[f'blocks.{block_idx}.self_attn.k_proj.weight'] = k
                     new_state_dict[f'blocks.{block_idx}.self_attn.v_proj.weight'] = v
-                else:  # bias
-                    q, k, v = value.chunk(3, dim=0)
-                    new_state_dict[f'blocks.{block_idx}.self_attn.q_proj.bias'] = q
-                    new_state_dict[f'blocks.{block_idx}.self_attn.k_proj.bias'] = k
-                    new_state_dict[f'blocks.{block_idx}.self_attn.v_proj.bias'] = v
-            else:
-                new_state_dict[new_key] = value
+                elif parts[3] == 'q_bias':
+                    new_state_dict[f'blocks.{block_idx}.self_attn.q_proj.bias'] = value
+                elif parts[3] == 'v_bias':
+                    new_state_dict[f'blocks.{block_idx}.self_attn.v_proj.bias'] = value
+                elif parts[3] == 'proj' and parts[4] == 'weight':
+                    new_state_dict[f'blocks.{block_idx}.self_attn.out_proj.weight'] = value
+                elif parts[3] == 'proj' and parts[4] == 'bias':
+                    new_state_dict[f'blocks.{block_idx}.self_attn.out_proj.bias'] = value
+
+            # MLP
+            elif parts[2] == 'mlp':
+                if parts[3] == 'fc1':
+                    new_key = f'blocks.{block_idx}.mlp.0.{parts[4]}'
+                    new_state_dict[new_key] = value
+                elif parts[3] == 'fc2':
+                    new_key = f'blocks.{block_idx}.mlp.3.{parts[4]}'
+                    new_state_dict[new_key] = value
         else:
             unexpected_keys.append(old_key)
 
-    # Handle positional embedding interpolation if needed
-    if 'pos_embed' in new_state_dict:
-        pretrained_pos = new_state_dict['pos_embed']
-        model_pos = encoder.pos_embed
-
-        if pretrained_pos.shape != model_pos.shape:
-            logger.warning(
-                f"Positional embedding shape mismatch: "
-                f"pretrained {pretrained_pos.shape} vs model {model_pos.shape}. "
-                f"Interpolating..."
-            )
-            # Interpolate positional embeddings
-            new_state_dict['pos_embed'] = _interpolate_pos_embed(
-                pretrained_pos, model_pos.shape[1], encoder
-            )
+    # Note: VideoMAE uses sinusoidal positional embeddings generated on-the-fly,
+    # not stored in checkpoint. We keep our learned positional embeddings.
+    # Also, patch_norm is not in VideoMAE (our addition).
 
     # Load the mapped state dict
     load_result = encoder.load_state_dict(new_state_dict, strict=False)
     missing_keys = load_result.missing_keys
-    # Note: patch_norm will be in missing_keys since VideoMAE doesn't have it
 
     logger.info(f"Loaded VideoMAE weights from {checkpoint_path}")
-    logger.info(f"Missing keys: {len(missing_keys)}, Unexpected keys: {len(unexpected_keys)}")
+    logger.info(f"Loaded {len(new_state_dict)} parameters")
+    logger.info(f"Missing keys (expected): {missing_keys}")
 
-    if missing_keys:
-        logger.debug(f"Missing keys: {missing_keys}")
     if unexpected_keys:
-        logger.debug(f"Unexpected keys: {unexpected_keys}")
+        logger.debug(f"Skipped keys (decoder/other): {len(unexpected_keys)}")
 
     return missing_keys, unexpected_keys
 
