@@ -14,8 +14,9 @@ def build_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.opt
     """
     Build optimizer from config.
 
-    Supports parameter group-specific learning rates for cross-attention
-    Q/K projections (qk_lr_multiplier) to help with gradient flow.
+    Supports parameter group-specific learning rates:
+    - encoder_lr_multiplier: Lower LR for encoder (to preserve pretrained weights)
+    - qk_lr_multiplier: Higher LR for cross-attention Q/K projections
 
     Args:
         model: Model to optimize
@@ -28,29 +29,58 @@ def build_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.opt
     lr = config.get('lr', 1e-4)
     weight_decay = config.get('weight_decay', 0.05)
     qk_lr_multiplier = config.get('qk_lr_multiplier', 1.0)
+    encoder_lr_multiplier = config.get('encoder_lr_multiplier', 1.0)
 
-    # Build parameter groups
-    if qk_lr_multiplier != 1.0:
-        # Separate Q/K parameters from others for higher LR
+    # Build parameter groups based on multipliers
+    use_param_groups = (qk_lr_multiplier != 1.0) or (encoder_lr_multiplier != 1.0)
+
+    if use_param_groups:
+        # Separate parameters into groups with different learning rates
+        encoder_params = []
         qk_params = []
         other_params = []
 
         for name, param in model.named_parameters():
             if not param.requires_grad:
                 continue
-            # Match cross-attention Q and K projections
-            if 'cross_attn' in name and ('q_proj' in name or 'k_proj' in name):
+
+            # Encoder parameters (lower LR to preserve pretrained features)
+            if name.startswith('encoder.'):
+                encoder_params.append(param)
+            # Cross-attention Q/K parameters (higher LR for faster attention learning)
+            elif 'cross_attn' in name and ('q_proj' in name or 'k_proj' in name):
                 qk_params.append(param)
             else:
                 other_params.append(param)
 
-        param_groups = [
-            {'params': qk_params, 'lr': lr * qk_lr_multiplier, 'name': 'qk_params'},
-            {'params': other_params, 'lr': lr, 'name': 'other_params'},
-        ]
+        param_groups = []
 
-        print(f"Optimizer: Q/K params ({len(qk_params)}) LR={lr * qk_lr_multiplier:.2e}, "
-              f"Other params ({len(other_params)}) LR={lr:.2e}")
+        if encoder_params:
+            encoder_lr = lr * encoder_lr_multiplier
+            param_groups.append({
+                'params': encoder_params,
+                'lr': encoder_lr,
+                'name': 'encoder_params'
+            })
+            print(f"Optimizer: Encoder params ({len(encoder_params)}) LR={encoder_lr:.2e}")
+
+        if qk_params:
+            qk_lr = lr * qk_lr_multiplier
+            param_groups.append({
+                'params': qk_params,
+                'lr': qk_lr,
+                'name': 'qk_params'
+            })
+            print(f"Optimizer: Q/K params ({len(qk_params)}) LR={qk_lr:.2e}")
+
+        if other_params:
+            param_groups.append({
+                'params': other_params,
+                'lr': lr,
+                'name': 'other_params'
+            })
+            print(f"Optimizer: Other params ({len(other_params)}) LR={lr:.2e}")
+
     else:
         # Standard single parameter group
         param_groups = [p for p in model.parameters() if p.requires_grad]

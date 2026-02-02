@@ -1,6 +1,11 @@
 # ViT-B configuration for MOVi dataset with context pooling
 # This config enables context pooling to improve cross-attention gradient flow
 # Based on debugging results showing uniform attention over 3072 tokens
+#
+# Architecture differences from original D4RT paper:
+# - LayerNorm after patch embedding (use_patch_norm: true) for scale balance
+# - Original D4RT uses VideoMAE pretrained weights without this normalization
+# See README.md for details.
 
 name: vit_b_movi_pooled
 
@@ -8,7 +13,7 @@ name: vit_b_movi_pooled
 encoder:
   name: SpatioTemporalViT
   num_layers: 12
-  embed_dim: 768
+  hidden_dim: 768  # Note: renamed from embed_dim for config consistency
   num_heads: 12
   mlp_ratio: 4.0
   dropout: 0.0
@@ -23,6 +28,15 @@ encoder:
 
   # Gradient checkpointing
   use_checkpoint: true
+
+  # LayerNorm after patch embedding (not in original D4RT, but helps maintain
+  # scale balance between patch features and positional embeddings)
+  # Set to false if using VideoMAE pretrained weights for strict paper reproduction
+  use_patch_norm: true
+
+  # VideoMAE pretrained weights path (optional)
+  # Download from: https://github.com/MCG-NJU/VideoMAE
+  # pretrained_weights: null  # e.g., "pretrained/videomae_vit_b.pth"
 
 # Decoder configuration with context pooling
 decoder:
