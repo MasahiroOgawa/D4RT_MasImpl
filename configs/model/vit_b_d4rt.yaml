@@ -15,7 +15,7 @@ encoder:
   dropout: 0.0
   attention_dropout: 0.0
   drop_path_rate: 0.1
-  use_checkpoint: false
+  use_checkpoint: true   # Gradient checkpointing to save memory
   # Paper-specific settings
   use_paper_blocks: true             # Figure 7: each block has local + global attention
   use_patch_norm: false              # No patch normalization (preserves brightness)
