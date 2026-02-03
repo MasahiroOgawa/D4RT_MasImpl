@@ -85,9 +85,9 @@ doc/                 # Detailed documentation
 | Document | Description |
 |----------|-------------|
 | [Architecture](doc/architecture.md) | Detailed model architecture (Figure 7) |
-| [Implementation Notes](doc/implementation_notes.md) | Differences from paper, fixes, and lessons learned |
-| [Training Guide](doc/training.md) | Training configuration and tips |
-| [Inference Guide](doc/inference.md) | How to use for various tasks |
+| [Training Guide](doc/training.md) | Training loop, loss functions, hyperparameters |
+| [Inference Guide](doc/inference.md) | Point tracking, depth, pose estimation |
+| [Implementation Notes](doc/implementation_notes.md) | Differences from paper, fixes, lessons learned |
 
 ## Model Variants
 
