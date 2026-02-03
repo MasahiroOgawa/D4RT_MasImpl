@@ -270,22 +270,26 @@ class TestConfidenceLossIntegration:
         """Test that loss provides learning signal for confidence."""
         loss_fn = ConfidenceLoss()
 
-        pred_xyz = torch.randn(2, 16, 3)
-        gt_xyz = torch.randn(2, 16, 3)
-
-        error = compute_prediction_error(pred_xyz, gt_xyz, error_type='l2')
+        # Use fixed large errors to ensure consistent test behavior
+        error = torch.ones(2, 16, 1) * 5.0  # Large fixed error
 
         # Two scenarios: good confidence vs bad confidence
-        confidence_good = torch.tensor(0.8).expand(2, 16, 1).requires_grad_(True)
-        confidence_bad = torch.tensor(0.2).expand(2, 16, 1).requires_grad_(True)
+        confidence_good = torch.tensor(0.9).expand(2, 16, 1).requires_grad_(True)
+        confidence_bad = torch.tensor(0.1).expand(2, 16, 1).requires_grad_(True)
 
         loss_good = loss_fn(confidence_good, error)
         loss_bad = loss_fn(confidence_bad, error)
 
-        # With large errors, high confidence should have higher loss
-        # (we're confident but wrong)
-        if error.mean() > 1.0:
-            assert loss_good > loss_bad
+        # With large errors (error > threshold where c*error dominates -λconf*log(c)):
+        # High confidence should have higher loss because c*error dominates
+        # The crossover depends on the penalty_weight, but with error=5.0:
+        # - loss_good ≈ 0.9 * 5.0 - λ * log(0.9) = 4.5 + small_penalty
+        # - loss_bad ≈ 0.1 * 5.0 - λ * log(0.1) = 0.5 + larger_penalty
+        # For large errors, confidence_weighted_error should dominate
+        assert loss_good > loss_bad, (
+            f"With large error, high confidence should have higher loss. "
+            f"loss_good={loss_good.item():.4f}, loss_bad={loss_bad.item():.4f}"
+        )
 
 
 if __name__ == "__main__":

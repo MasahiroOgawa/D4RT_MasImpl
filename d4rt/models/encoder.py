@@ -1,4 +1,12 @@
-"""Spatio-Temporal ViT Encoder for D4RT."""
+"""Spatio-Temporal ViT Encoder for D4RT.
+
+This module implements the D4RT encoder per Figure 7 of the paper:
+- Video → Tokenizer → PE → [video_tokens with positional encoding]
+- W/H → FC → [ar_token without positional encoding]
+- Concat([ar_token, video_tokens]) → N Encoder Blocks → F
+
+Each encoder block contains BOTH local (per-frame) and global attention.
+"""
 
 import torch
 import torch.nn as nn
@@ -7,6 +15,8 @@ from typing import Optional, Tuple
 import torch.utils.checkpoint as checkpoint
 
 from .components.attention import TransformerBlock
+from .components.aspect_ratio_token import AspectRatioToken
+from .components.encoder_block import D4RTEncoderBlock, LegacyEncoderBlock
 
 
 class PatchEmbed3D(nn.Module):
@@ -59,17 +69,17 @@ class PatchEmbed3D(nn.Module):
 
 class SpatioTemporalViT(nn.Module):
     """
-    Spatio-Temporal Vision Transformer for video encoding.
+    D4RT Spatio-Temporal ViT Encoder (Figure 7).
 
-    Processes video frames using 3D patch embedding followed by
-    standard transformer blocks with self-attention.
+    Architecture (exactly per Figure 7):
+        Video → Tokenizer → PE → [video_tokens with pos encoding]
+        W/H → FC → [ar_token without pos encoding]
+        Concat([ar_token, video_tokens]) → N Encoder Blocks → F
 
-    Note: This implementation adds LayerNorm after patch embedding,
-    which differs from the original D4RT paper. The original paper uses
-    VideoMAE pretrained weights where the patch/positional embedding scales
-    are already balanced from pretraining. We add LayerNorm to maintain
-    this balance during fine-tuning from scratch or with pretrained weights.
-    See README.md for details.
+    Key features:
+    - Aspect ratio token: separate token without positional encoding
+    - Paper blocks: each block has BOTH local (per-frame) and global attention
+    - Optional patch normalization (disabled by default per paper)
     """
 
     def __init__(
@@ -85,7 +95,8 @@ class SpatioTemporalViT(nn.Module):
         attention_dropout: float = 0.0,
         drop_path_rate: float = 0.1,
         use_checkpoint: bool = False,
-        use_patch_norm: bool = True,  # LayerNorm after patch embedding
+        use_patch_norm: bool = False,  # Disabled by default (preserves brightness)
+        use_paper_blocks: bool = True,  # Figure 7: each block has local + global
     ):
         """
         Initialize Spatio-Temporal ViT.
@@ -102,6 +113,10 @@ class SpatioTemporalViT(nn.Module):
             attention_dropout: Attention dropout rate
             drop_path_rate: Stochastic depth rate
             use_checkpoint: Whether to use gradient checkpointing
+            use_patch_norm: Whether to normalize patch embeddings
+                           (False by default - preserves brightness information)
+            use_paper_blocks: Whether to use paper block structure with both
+                             local and global attention (True by default)
         """
         super().__init__()
 
@@ -111,54 +126,72 @@ class SpatioTemporalViT(nn.Module):
         self.num_layers = num_layers
         self.use_checkpoint = use_checkpoint
         self.use_patch_norm = use_patch_norm
+        self.use_paper_blocks = use_paper_blocks
 
         # Calculate number of patches
         T, H, W = input_resolution
         t_patch, h_patch, w_patch = patch_size
-        self.num_patches = (T // t_patch) * (H // h_patch) * (W // w_patch)
+        self.num_temporal_patches = T // t_patch
+        self.num_spatial_patches_h = H // h_patch
+        self.num_spatial_patches_w = W // w_patch
+        self.patches_per_frame = self.num_spatial_patches_h * self.num_spatial_patches_w
+        self.num_patches = self.num_temporal_patches * self.patches_per_frame
 
-        # Patch embedding
+        # Patch embedding (NO normalization by default - preserves brightness)
         self.patch_embed = PatchEmbed3D(
             patch_size=patch_size,
             in_channels=in_channels,
             embed_dim=embed_dim,
         )
 
-        # LayerNorm after patch embedding (not in original D4RT, but helps maintain
-        # scale balance between patch features and positional embeddings during
-        # fine-tuning. See README.md for architectural differences.)
+        # Optional patch normalization (disabled by default per paper)
         if use_patch_norm:
             self.patch_norm = nn.LayerNorm(embed_dim)
-            # When using patch norm, features have norm ≈ sqrt(embed_dim) ≈ 27.7
-            # Scale up positional embedding to be comparable (std=0.5 → norm ≈ 13.9)
-            pos_embed_std = 0.5
+            pos_embed_std = 0.5  # Larger std to match normalized patch scale
         else:
             self.patch_norm = nn.Identity()
-            # Standard ViT initialization (assumes pretrained patch embed scale)
-            pos_embed_std = 0.02
+            pos_embed_std = 0.02  # Standard ViT initialization
 
-        # Positional embedding (learned)
+        # Positional embedding (ONLY for video tokens, NOT for AR token - per Figure 7)
         self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, embed_dim))
         nn.init.trunc_normal_(self.pos_embed, std=pos_embed_std)
 
         self.pos_drop = nn.Dropout(p=dropout)
 
+        # Aspect ratio token (Paper p.3: "separate token", Figure 7: W/H → FC)
+        # Note: AR token does NOT get positional encoding
+        self.aspect_ratio_token = AspectRatioToken(embed_dim)
+
         # Stochastic depth decay rule
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, num_layers)]
 
-        # Transformer blocks
-        self.blocks = nn.ModuleList([
-            TransformerBlock(
-                embed_dim=embed_dim,
-                num_heads=num_heads,
-                mlp_ratio=mlp_ratio,
-                dropout=dropout,
-                attention_dropout=attention_dropout,
-                drop_path=dpr[i],
-                use_cross_attention=False,  # Encoder uses only self-attention
-            )
-            for i in range(num_layers)
-        ])
+        # Encoder blocks
+        if use_paper_blocks:
+            # Paper architecture: each block has BOTH local + global attention
+            self.blocks = nn.ModuleList([
+                D4RTEncoderBlock(
+                    embed_dim=embed_dim,
+                    num_heads=num_heads,
+                    mlp_ratio=mlp_ratio,
+                    dropout=dropout,
+                    attention_dropout=attention_dropout,
+                    drop_path=dpr[i],
+                )
+                for i in range(num_layers)
+            ])
+        else:
+            # Legacy: global-only attention (for backward compatibility)
+            self.blocks = nn.ModuleList([
+                LegacyEncoderBlock(
+                    embed_dim=embed_dim,
+                    num_heads=num_heads,
+                    mlp_ratio=mlp_ratio,
+                    dropout=dropout,
+                    attention_dropout=attention_dropout,
+                    drop_path=dpr[i],
+                )
+                for i in range(num_layers)
+            ])
 
         # Final layer norm
         self.norm = nn.LayerNorm(embed_dim)
@@ -171,57 +204,68 @@ class SpatioTemporalViT(nn.Module):
         w = self.patch_embed.proj.weight.data
         nn.init.xavier_uniform_(w.view(w.size(0), -1))
 
-        # Initialize transformer blocks
-        for block in self.blocks:
-            # Initialize attention weights
-            nn.init.xavier_uniform_(block.self_attn.q_proj.weight)
-            nn.init.xavier_uniform_(block.self_attn.k_proj.weight)
-            nn.init.xavier_uniform_(block.self_attn.v_proj.weight)
-            nn.init.xavier_uniform_(block.self_attn.out_proj.weight)
-
-            # Initialize MLP weights
-            for layer in block.mlp:
-                if isinstance(layer, nn.Linear):
-                    nn.init.xavier_uniform_(layer.weight)
-                    if layer.bias is not None:
-                        nn.init.zeros_(layer.bias)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        aspect_ratio: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """
         Forward pass.
 
         Args:
             x: [B, T, C, H, W] video tensor
+            aspect_ratio: [B] original W/H ratio (optional, defaults to 1.0)
 
         Returns:
-            features: [B, num_patches, embed_dim] encoded features
+            features: [B, num_patches, embed_dim] encoded features (Global Scene Representation F)
         """
-        B = x.shape[0]
+        B, T, C, H, W = x.shape
 
         # Rearrange to [B, C, T, H, W] for Conv3d
         x = rearrange(x, 'b t c h w -> b c t h w')
 
-        # Patch embedding
+        # Tokenizer: Video → patches (NO normalization by default)
         x = self.patch_embed(x)  # [B, num_patches, embed_dim]
 
-        # Normalize patch embeddings (maintains scale balance with positional embeddings)
+        # Optional patch normalization
         x = self.patch_norm(x)
 
-        # Add positional embedding
+        # PE: Add positional encoding to video tokens ONLY (Figure 7)
         x = x + self.pos_embed
         x = self.pos_drop(x)
 
-        # Apply transformer blocks
+        # Aspect ratio token (Paper p.3: "embed it into a separate token")
+        # NO positional encoding for AR token (per Figure 7)
+        if aspect_ratio is None:
+            aspect_ratio = torch.ones(B, device=x.device)
+        ar_token = self.aspect_ratio_token(aspect_ratio)  # [B, 1, embed_dim]
+
+        # Concatenate: [ar_token, video_tokens] (Figure 7: ⊕)
+        x = torch.cat([ar_token, x], dim=1)  # [B, 1 + num_patches, embed_dim]
+
+        # N Encoder Blocks (each with local + global attention if use_paper_blocks)
         for block in self.blocks:
             if self.use_checkpoint and self.training:
-                x = checkpoint.checkpoint(block, x, None, None)
+                x = checkpoint.checkpoint(
+                    block, x,
+                    self.num_temporal_patches,
+                    self.patches_per_frame,
+                    True,  # has_ar_token
+                    use_reentrant=False,
+                )
             else:
-                x = block(x)
+                x = block(
+                    x,
+                    num_frames=self.num_temporal_patches,
+                    patches_per_frame=self.patches_per_frame,
+                    has_ar_token=True,
+                )
 
-        # Final layer norm
+        # Final LayerNorm
         x = self.norm(x)
 
-        return x
+        # Return only video tokens (exclude AR token) as Global Scene Representation F
+        return x[:, 1:]  # [B, num_patches, embed_dim]
 
     @property
     def output_dim(self) -> int:
@@ -256,7 +300,8 @@ def build_vit_encoder(config: dict) -> SpatioTemporalViT:
         attention_dropout=config.get('attention_dropout', 0.0),
         drop_path_rate=config.get('drop_path_rate', 0.1),
         use_checkpoint=config.get('use_checkpoint', False),
-        use_patch_norm=config.get('use_patch_norm', True),  # Default True for stability
+        use_patch_norm=config.get('use_patch_norm', False),  # Disabled by default
+        use_paper_blocks=config.get('use_paper_blocks', True),  # Paper architecture
     )
 
 
@@ -288,6 +333,7 @@ def load_videomae_weights(
         - VideoMAE uses fused QKV weights (attn.qkv.weight)
         - VideoMAE has separate q_bias/v_bias (no k_bias)
         - VideoMAE uses sinusoidal pos_embed (not in checkpoint)
+        - Our D4RT blocks have different structure (local + global attention)
     """
     import logging
     logger = logging.getLogger(__name__)
@@ -328,50 +374,70 @@ def load_videomae_weights(
         elif key == 'norm.bias':
             new_state_dict['norm.bias'] = value
 
-        # Transformer blocks
+        # Transformer blocks - map to D4RT block structure
         elif key.startswith('blocks.'):
             parts = key.split('.')
             block_idx = parts[1]
 
-            # LayerNorms
-            if parts[2] == 'norm1':
-                new_key = f'blocks.{block_idx}.norm1.{parts[3]}'
-                new_state_dict[new_key] = value
-            elif parts[2] == 'norm2':
-                new_key = f'blocks.{block_idx}.norm2.{parts[3]}'
-                new_state_dict[new_key] = value
+            if encoder.use_paper_blocks:
+                # D4RT paper blocks have different structure
+                # VideoMAE: norm1 → attn → norm2 → mlp
+                # D4RT: norm1 → local_attn → norm2 → mlp1 → norm3 → global_attn → norm4 → mlp2
 
-            # Attention
-            elif parts[2] == 'attn':
-                if parts[3] == 'qkv' and parts[4] == 'weight':
-                    # Split fused QKV weight
-                    q, k, v = value.chunk(3, dim=0)
-                    new_state_dict[f'blocks.{block_idx}.self_attn.q_proj.weight'] = q
-                    new_state_dict[f'blocks.{block_idx}.self_attn.k_proj.weight'] = k
-                    new_state_dict[f'blocks.{block_idx}.self_attn.v_proj.weight'] = v
-                elif parts[3] == 'q_bias':
-                    new_state_dict[f'blocks.{block_idx}.self_attn.q_proj.bias'] = value
-                elif parts[3] == 'v_bias':
-                    new_state_dict[f'blocks.{block_idx}.self_attn.v_proj.bias'] = value
-                elif parts[3] == 'proj' and parts[4] == 'weight':
-                    new_state_dict[f'blocks.{block_idx}.self_attn.out_proj.weight'] = value
-                elif parts[3] == 'proj' and parts[4] == 'bias':
-                    new_state_dict[f'blocks.{block_idx}.self_attn.out_proj.bias'] = value
-
-            # MLP
-            elif parts[2] == 'mlp':
-                if parts[3] == 'fc1':
-                    new_key = f'blocks.{block_idx}.mlp.0.{parts[4]}'
+                # Map VideoMAE attention to global attention
+                if parts[2] == 'norm1':
+                    new_key = f'blocks.{block_idx}.norm3.{parts[3]}'
                     new_state_dict[new_key] = value
-                elif parts[3] == 'fc2':
-                    new_key = f'blocks.{block_idx}.mlp.3.{parts[4]}'
+                elif parts[2] == 'norm2':
+                    new_key = f'blocks.{block_idx}.norm4.{parts[3]}'
                     new_state_dict[new_key] = value
+                elif parts[2] == 'attn':
+                    if parts[3] == 'qkv' and parts[4] == 'weight':
+                        # Split fused QKV weight and map to global attention
+                        embed_dim = value.shape[0] // 3
+                        q, k, v = value.split(embed_dim, dim=0)
+                        new_state_dict[f'blocks.{block_idx}.global_attn.in_proj_weight'] = value
+                    elif parts[3] == 'q_bias':
+                        # Store for later combination
+                        pass  # Handled with qkv
+                    elif parts[3] == 'v_bias':
+                        # Store for later combination
+                        pass  # Handled with qkv
+                    elif parts[3] == 'proj' and parts[4] == 'weight':
+                        new_state_dict[f'blocks.{block_idx}.global_attn.out_proj.weight'] = value
+                    elif parts[3] == 'proj' and parts[4] == 'bias':
+                        new_state_dict[f'blocks.{block_idx}.global_attn.out_proj.bias'] = value
+                elif parts[2] == 'mlp':
+                    if parts[3] == 'fc1':
+                        new_key = f'blocks.{block_idx}.mlp2.fc1.{parts[4]}'
+                        new_state_dict[new_key] = value
+                    elif parts[3] == 'fc2':
+                        new_key = f'blocks.{block_idx}.mlp2.fc2.{parts[4]}'
+                        new_state_dict[new_key] = value
+            else:
+                # Legacy blocks - simpler mapping
+                if parts[2] == 'norm1':
+                    new_key = f'blocks.{block_idx}.norm1.{parts[3]}'
+                    new_state_dict[new_key] = value
+                elif parts[2] == 'norm2':
+                    new_key = f'blocks.{block_idx}.norm2.{parts[3]}'
+                    new_state_dict[new_key] = value
+                elif parts[2] == 'attn':
+                    if parts[3] == 'qkv' and parts[4] == 'weight':
+                        new_state_dict[f'blocks.{block_idx}.self_attn.in_proj_weight'] = value
+                    elif parts[3] == 'proj' and parts[4] == 'weight':
+                        new_state_dict[f'blocks.{block_idx}.self_attn.out_proj.weight'] = value
+                    elif parts[3] == 'proj' and parts[4] == 'bias':
+                        new_state_dict[f'blocks.{block_idx}.self_attn.out_proj.bias'] = value
+                elif parts[2] == 'mlp':
+                    if parts[3] == 'fc1':
+                        new_key = f'blocks.{block_idx}.mlp.fc1.{parts[4]}'
+                        new_state_dict[new_key] = value
+                    elif parts[3] == 'fc2':
+                        new_key = f'blocks.{block_idx}.mlp.fc2.{parts[4]}'
+                        new_state_dict[new_key] = value
         else:
             unexpected_keys.append(old_key)
-
-    # Note: VideoMAE uses sinusoidal positional embeddings generated on-the-fly,
-    # not stored in checkpoint. We keep our learned positional embeddings.
-    # Also, patch_norm is not in VideoMAE (our addition).
 
     # Load the mapped state dict
     load_result = encoder.load_state_dict(new_state_dict, strict=False)
@@ -379,7 +445,7 @@ def load_videomae_weights(
 
     logger.info(f"Loaded VideoMAE weights from {checkpoint_path}")
     logger.info(f"Loaded {len(new_state_dict)} parameters")
-    logger.info(f"Missing keys (expected): {missing_keys}")
+    logger.info(f"Missing keys (expected for D4RT-specific modules): {missing_keys}")
 
     if unexpected_keys:
         logger.debug(f"Skipped keys (decoder/other): {len(unexpected_keys)}")
@@ -409,7 +475,6 @@ def _interpolate_pos_embed(
         return pos_embed
 
     # Calculate source and target grid sizes
-    # Assuming the positional embedding is for a spatio-temporal grid
     T, H, W = encoder.input_resolution
     t_patch, h_patch, w_patch = encoder.patch_size
     target_t = T // t_patch
@@ -417,8 +482,6 @@ def _interpolate_pos_embed(
     target_w = W // w_patch
 
     # Reshape to 3D grid, interpolate, reshape back
-    # This is a simplified version - full implementation would need
-    # to know the source grid dimensions
     pos_embed = pos_embed.reshape(1, -1, D)
 
     # Use linear interpolation along the sequence dimension

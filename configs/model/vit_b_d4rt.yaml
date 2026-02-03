@@ -1,0 +1,51 @@
+# D4RT ViT-B Configuration (Paper Architecture - Figure 7)
+#
+# Key features:
+# - Paper blocks: each encoder block has BOTH local + global attention
+# - Aspect ratio token: separate token without positional encoding
+# - No patch normalization: preserves brightness information
+
+encoder:
+  input_resolution: [24, 256, 256]  # [T, H, W] - 24 frames, 256x256 (square)
+  patch_size: [2, 16, 16]           # [t, h, w] patches
+  hidden_dim: 768                    # ViT-B embedding dimension
+  num_layers: 12                     # 12 transformer layers
+  num_heads: 12                      # 12 attention heads
+  mlp_ratio: 4.0
+  dropout: 0.0
+  attention_dropout: 0.0
+  drop_path_rate: 0.1
+  use_checkpoint: false
+  # Paper-specific settings
+  use_paper_blocks: true             # Figure 7: each block has local + global attention
+  use_patch_norm: false              # No patch normalization (preserves brightness)
+
+decoder:
+  query_dim: 512
+  context_dim: 768                   # Must match encoder hidden_dim
+  hidden_dim: 512
+  num_layers: 8                      # 8 decoder layers
+  num_heads: 8
+  mlp_ratio: 4.0
+  dropout: 0.0
+  attention_dropout: 0.0
+  drop_path_rate: 0.1
+  context_pool_tokens: null          # No context pooling (use all 3072 tokens)
+  context_input_tokens: 3072         # 12 * 16 * 16 = 3072 patches
+  # Output heads
+  output_uv: true                    # 2D coordinate output
+  output_normals: true               # Surface normal output
+  output_motion: true                # Motion displacement output
+
+query_encoder:
+  fourier:
+    num_frequencies: 10              # Fourier encoding frequencies
+    max_frequency: 9                 # 2^9 = 512 max frequency
+  temporal:
+    max_frames: 128                  # Maximum video length
+    embedding_dim: 256               # Temporal embedding dimension
+  patch_cnn:
+    patch_size: 9                    # 9x9 RGB patch
+    channels: [64, 128]              # CNN hidden channels
+    output_dim: 256                  # CNN output dimension
+  output_dim: 512                    # Final query dimension (matches decoder query_dim)

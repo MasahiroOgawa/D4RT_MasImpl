@@ -1,7 +1,18 @@
-"""Cross-Attention Decoder for D4RT."""
+"""Cross-Attention Decoder for D4RT.
+
+The decoder takes query embeddings and cross-attends to the encoder's
+global scene representation to output:
+- xyz: 3D position [B, N, 3]
+- uv: 2D image coordinates [B, N, 2]
+- normals: surface normals [B, N, 3] (unit normalized)
+- motion: motion displacement [B, N, 3]
+- visibility: occlusion logit [B, N, 1]
+- confidence: prediction quality [B, N, 1]
+"""
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from typing import Optional
 from .components.attention import TransformerBlock
 
@@ -53,10 +64,11 @@ class ContextPooling(nn.Module):
 
 class CrossAttentionDecoder(nn.Module):
     """
-    Cross-attention decoder that queries encoder features to predict 3D positions.
+    Cross-attention decoder that queries encoder features to predict outputs.
 
     The decoder takes query embeddings and cross-attends to the encoder's
-    global scene representation to output 3D positions and visibility.
+    global scene representation to output 3D positions, 2D coordinates,
+    surface normals, motion, visibility, and confidence.
     """
 
     def __init__(
@@ -72,6 +84,9 @@ class CrossAttentionDecoder(nn.Module):
         drop_path_rate: float = 0.1,
         context_pool_tokens: Optional[int] = None,
         context_input_tokens: int = 3072,
+        output_uv: bool = True,
+        output_normals: bool = True,
+        output_motion: bool = True,
     ):
         """
         Initialize cross-attention decoder.
@@ -88,6 +103,9 @@ class CrossAttentionDecoder(nn.Module):
             drop_path_rate: Stochastic depth rate
             context_pool_tokens: Number of tokens after pooling (None = no pooling)
             context_input_tokens: Number of input context tokens (default: 3072 for ViT-B)
+            output_uv: Whether to output 2D coordinates
+            output_normals: Whether to output surface normals
+            output_motion: Whether to output motion displacement
         """
         super().__init__()
 
@@ -96,6 +114,9 @@ class CrossAttentionDecoder(nn.Module):
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         self.context_pool_tokens = context_pool_tokens
+        self.output_uv = output_uv
+        self.output_normals = output_normals
+        self.output_motion = output_motion
 
         # Project query to hidden dimension if needed
         if query_dim != hidden_dim:
@@ -138,10 +159,27 @@ class CrossAttentionDecoder(nn.Module):
         # Final layer norm
         self.norm = nn.LayerNorm(hidden_dim)
 
-        # Output heads
-        self.xyz_head = nn.Linear(hidden_dim, 3)  # 3D position (x, y, z)
-        self.vis_head = nn.Linear(hidden_dim, 1)  # Visibility logit
+        # ========== Output Heads ==========
+        # Primary outputs (always present)
+        self.xyz_head = nn.Linear(hidden_dim, 3)      # 3D position (x, y, z)
+        self.vis_head = nn.Linear(hidden_dim, 1)      # Visibility logit
         self.confidence_head = nn.Linear(hidden_dim, 1)  # Confidence score
+
+        # Optional output heads
+        if output_uv:
+            self.uv_head = nn.Linear(hidden_dim, 2)   # 2D coordinates (u, v)
+        else:
+            self.uv_head = None
+
+        if output_normals:
+            self.normals_head = nn.Linear(hidden_dim, 3)  # Surface normals
+        else:
+            self.normals_head = None
+
+        if output_motion:
+            self.motion_head = nn.Linear(hidden_dim, 3)  # Motion displacement
+        else:
+            self.motion_head = None
 
         self._init_weights()
 
@@ -156,6 +194,18 @@ class CrossAttentionDecoder(nn.Module):
 
         nn.init.xavier_uniform_(self.confidence_head.weight)
         nn.init.zeros_(self.confidence_head.bias)
+
+        if self.uv_head is not None:
+            nn.init.xavier_uniform_(self.uv_head.weight)
+            nn.init.zeros_(self.uv_head.bias)
+
+        if self.normals_head is not None:
+            nn.init.xavier_uniform_(self.normals_head.weight)
+            nn.init.zeros_(self.normals_head.bias)
+
+        if self.motion_head is not None:
+            nn.init.xavier_uniform_(self.motion_head.weight)
+            nn.init.zeros_(self.motion_head.bias)
 
     def forward(
         self,
@@ -177,7 +227,10 @@ class CrossAttentionDecoder(nn.Module):
             outputs: Dictionary with keys:
                 - 'xyz': [B, N, 3] predicted 3D positions
                 - 'visibility': [B, N, 1] visibility logits
-                - 'confidence': [B, N, 1] confidence scores (range [0, 1])
+                - 'confidence': [B, N, 1] confidence scores (raw logits)
+                - 'uv': [B, N, 2] 2D coordinates (if output_uv=True)
+                - 'normals': [B, N, 3] surface normals, unit normalized (if output_normals=True)
+                - 'motion': [B, N, 3] motion displacement (if output_motion=True)
         """
         # Project inputs
         x = self.query_proj(queries)  # [B, N, hidden_dim]
@@ -194,16 +247,28 @@ class CrossAttentionDecoder(nn.Module):
         # Final layer norm
         x = self.norm(x)
 
-        # Output heads
-        xyz = self.xyz_head(x)  # [B, N, 3]
-        visibility = self.vis_head(x)  # [B, N, 1]
-        confidence = torch.sigmoid(self.confidence_head(x))  # [B, N, 1], range [0, 1]
+        # ========== Output Heads ==========
+        outputs = {}
 
-        return {
-            'xyz': xyz,
-            'visibility': visibility,
-            'confidence': confidence,
-        }
+        # Primary outputs
+        outputs['xyz'] = self.xyz_head(x)  # [B, N, 3]
+        outputs['visibility'] = self.vis_head(x)  # [B, N, 1]
+        outputs['confidence'] = self.confidence_head(x)  # [B, N, 1] raw logits
+
+        # Optional outputs
+        if self.uv_head is not None:
+            # UV coordinates in [0, 1] range
+            outputs['uv'] = torch.sigmoid(self.uv_head(x))  # [B, N, 2]
+
+        if self.normals_head is not None:
+            # Surface normals, unit normalized
+            normals = self.normals_head(x)  # [B, N, 3]
+            outputs['normals'] = F.normalize(normals, dim=-1)  # [B, N, 3]
+
+        if self.motion_head is not None:
+            outputs['motion'] = self.motion_head(x)  # [B, N, 3]
+
+        return outputs
 
 
 class DecoderLayer(nn.Module):
@@ -317,4 +382,7 @@ def build_decoder(config: dict) -> CrossAttentionDecoder:
         drop_path_rate=config.get('drop_path_rate', 0.1),
         context_pool_tokens=config.get('context_pool_tokens', None),
         context_input_tokens=config.get('context_input_tokens', 3072),
+        output_uv=config.get('output_uv', True),
+        output_normals=config.get('output_normals', True),
+        output_motion=config.get('output_motion', True),
     )
