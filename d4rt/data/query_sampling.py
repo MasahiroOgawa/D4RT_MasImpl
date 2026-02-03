@@ -338,9 +338,16 @@ def extract_ground_truth_at_queries(
 
     uv_2d = torch.stack(uv_2d, dim=0)  # [N, 2]
 
+    # CRITICAL: Normalize UV to [0, 1] range to match model's sigmoid output
+    # Model outputs UV with sigmoid in [0, 1], so GT must be normalized too
+    uv_2d_normalized = uv_2d.clone()
+    uv_2d_normalized[:, 0] = uv_2d[:, 0] / (W - 1)  # u: pixel -> [0, 1]
+    uv_2d_normalized[:, 1] = uv_2d[:, 1] / (H - 1)  # v: pixel -> [0, 1]
+    uv_2d_normalized = torch.clamp(uv_2d_normalized, 0.0, 1.0)
+
     targets = {
         'xyz': xyz,
-        'uv': uv_2d,
+        'uv': uv_2d_normalized,  # Now in [0, 1] range
         'visibility': vis,
     }
 
