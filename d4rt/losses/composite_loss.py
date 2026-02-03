@@ -46,6 +46,7 @@ class D4RTCompositeLoss(nn.Module):
         self,
         loss_weights: Optional[Dict[str, float]] = None,
         use_paper_formula: bool = True,
+        confidence_warmup_steps: int = 0,
     ):
         """
         Initialize paper-exact composite loss.
@@ -53,9 +54,16 @@ class D4RTCompositeLoss(nn.Module):
         Args:
             loss_weights: Dictionary of loss weights
             use_paper_formula: If True, use paper's exact confidence-weighted formula
+            confidence_warmup_steps: Number of steps to use c=1 for xyz loss weighting.
+                This prevents the model from exploiting low confidence to minimize loss
+                without learning proper 3D predictions. After warmup, the learned
+                confidence is used. Set to 0 to disable warmup (original paper behavior).
+                Recommended: 10000-25000 steps.
         """
         super().__init__()
         self.use_paper_formula = use_paper_formula
+        self.confidence_warmup_steps = confidence_warmup_steps
+        self._current_step = 0
 
         # Default weights from paper
         default_weights = {
@@ -89,6 +97,19 @@ class D4RTCompositeLoss(nn.Module):
         self.normal_loss = NormalLoss()
         self.motion_loss = MotionLoss()
         self.projection_2d_loss = Projection2DLoss(loss_type='l2')
+
+    def set_step(self, step: int):
+        """Set the current training step for warmup scheduling."""
+        self._current_step = step
+
+    def get_confidence_weight(self) -> float:
+        """Get the current confidence weight (0 to 1) based on warmup schedule."""
+        if self.confidence_warmup_steps <= 0:
+            return 1.0  # No warmup, use full confidence weighting
+        if self._current_step >= self.confidence_warmup_steps:
+            return 1.0  # Warmup complete
+        # Linear warmup: start from 0 (c=1), increase to 1 (use learned c)
+        return self._current_step / self.confidence_warmup_steps
 
     def forward(
         self,
@@ -232,11 +253,34 @@ class D4RTCompositeLoss(nn.Module):
 
         # ========== Paper formula (per-query) ==========
         # L = c*λ3D*L3D - λconf*log(c) + λ2D*L2D + λvis*Lvis + λdisp*Ldisp + λnormal*Lnormal
+        #
+        # IMPORTANT: Confidence warmup schedule
+        # Problem: The paper formula allows the model to minimize loss by outputting
+        # low confidence, rather than learning accurate 3D predictions.
+        # Analysis: If L3D=5, optimal c = λconf/(λ3D*L3D) = 0.2/(1*5) = 0.04
+        #          The xyz gradient is multiplied by c ≈ 0.04, nearly vanishing!
+        #
+        # Solution: During warmup, use c_effective=1 for xyz loss weighting,
+        # but still train the confidence head via the penalty term.
+        # After warmup, gradually transition to using learned confidence.
 
-        # Confidence-weighted 3D loss: c * λ3D * L3D
-        conf_weighted_3d = c * self.lambda_3d * L3D
+        conf_weight = self.get_confidence_weight()
+        if conf_weight < 1.0:
+            # During warmup: blend between c=1 (no weighting) and learned c
+            # c_effective = 1 * (1 - conf_weight) + c * conf_weight
+            # When conf_weight=0: c_effective=1 (no confidence weighting)
+            # When conf_weight=1: c_effective=c (full confidence weighting)
+            c_effective = torch.ones_like(c) * (1 - conf_weight) + c * conf_weight
+            loss_dict['confidence_warmup_weight'] = conf_weight
+        else:
+            c_effective = c
+            loss_dict['confidence_warmup_weight'] = 1.0
+
+        # Confidence-weighted 3D loss: c_effective * λ3D * L3D
+        conf_weighted_3d = c_effective * self.lambda_3d * L3D
 
         # Confidence penalty: -λconf * log(c)
+        # Note: Always use actual c here so the confidence head keeps learning
         conf_penalty = -self.lambda_conf * torch.log(c)
 
         # Other losses (not confidence-weighted)
@@ -256,6 +300,7 @@ class D4RTCompositeLoss(nn.Module):
         # Store individual weighted losses for logging
         loss_dict['loss_3d_weighted'] = conf_weighted_3d.mean().item()
         loss_dict['loss_confidence_penalty'] = conf_penalty.mean().item()
+        loss_dict['c_effective_mean'] = c_effective.mean().item()
         loss_dict['loss_2d'] = (self.lambda_2d * L2D).mean().item()
         loss_dict['loss_visibility'] = (self.lambda_vis * Lvis).mean().item()
         loss_dict['loss_motion'] = (self.lambda_disp * Ldisp).mean().item()
@@ -377,7 +422,9 @@ def build_composite_loss(config: Dict) -> D4RTCompositeLoss:
     """
     loss_weights = config.get('loss_weights', {})
     use_paper_formula = config.get('use_paper_formula', True)
+    confidence_warmup_steps = config.get('confidence_warmup_steps', 0)
     return D4RTCompositeLoss(
         loss_weights=loss_weights,
         use_paper_formula=use_paper_formula,
+        confidence_warmup_steps=confidence_warmup_steps,
     )

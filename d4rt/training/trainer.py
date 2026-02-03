@@ -248,6 +248,10 @@ class D4RTTrainer:
             # Forward
             outputs = self.model(batch['video'], batch['queries'])
 
+            # Update loss function step for warmup schedules
+            if hasattr(self.loss_fn, 'set_step'):
+                self.loss_fn.set_step(self.global_step)
+
             # Compute loss
             loss, loss_dict = self.loss_fn(
                 predictions=outputs,

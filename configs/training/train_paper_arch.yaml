@@ -41,6 +41,11 @@ loss_weights:
   confidence: 0.2
   use_paper_formula_3d: true  # Mean depth normalization + signed-log transform
 
+# Confidence warmup: prevent model from exploiting low confidence during early training
+# Set to 25000 (half of max_steps) - during warmup, c=1 for 3D loss weighting
+# Analysis showed optimal c = λconf/(λ3D*L3D) ≈ 0.04 for L3D=5, causing gradient vanishing
+confidence_warmup_steps: 25000
+
 dataset:
   name: kubric
   data_dir: data/kubric
