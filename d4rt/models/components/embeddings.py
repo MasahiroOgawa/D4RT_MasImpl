@@ -22,7 +22,7 @@ class FourierPositionalEncoding(nn.Module):
         self.num_frequencies = num_frequencies
         # Frequency bands: [2^0, 2^1, ..., 2^max_frequency]
         frequencies = 2.0 ** torch.linspace(0, max_frequency, num_frequencies)
-        self.register_buffer('frequencies', frequencies)
+        self.register_buffer("frequencies", frequencies)
 
     @property
     def output_dim(self) -> int:
@@ -119,11 +119,13 @@ class PatchCNN(nn.Module):
         prev_channels = in_channels
 
         for hidden_dim in hidden_channels:
-            layers.extend([
-                nn.Conv2d(prev_channels, hidden_dim, kernel_size=3, padding=1),
-                nn.BatchNorm2d(hidden_dim),
-                nn.ReLU(inplace=True),
-            ])
+            layers.extend(
+                [
+                    nn.Conv2d(prev_channels, hidden_dim, kernel_size=3, padding=1),
+                    nn.BatchNorm2d(hidden_dim),
+                    nn.ReLU(inplace=True),
+                ]
+            )
             prev_channels = hidden_dim
 
         self.conv_layers = nn.Sequential(*layers)
@@ -251,22 +253,25 @@ class QueryEncoder(nn.Module):
         # Fourier encoding
         fourier_features = self.fourier(coords)  # [B, N, 40]
 
-        # Temporal embeddings
-        t_src_emb = self.temporal_src(t_src)  # [B, N, temporal_dim]
-        t_tgt_emb = self.temporal_tgt(t_tgt)  # [B, N, temporal_dim]
-        t_cam_emb = self.temporal_cam(t_cam)  # [B, N, temporal_dim]
+        # Temporal embeddings (convert to long if needed)
+        t_src_emb = self.temporal_src(t_src.long())  # [B, N, temporal_dim]
+        t_tgt_emb = self.temporal_tgt(t_tgt.long())  # [B, N, temporal_dim]
+        t_cam_emb = self.temporal_cam(t_cam.long())  # [B, N, temporal_dim]
 
         # Patch features
         patch_features = self.patch_cnn(patches)  # [B, N, patch_dim]
 
         # Concatenate all features
-        query_features = torch.cat([
-            fourier_features,
-            t_src_emb,
-            t_tgt_emb,
-            t_cam_emb,
-            patch_features,
-        ], dim=-1)  # [B, N, total_dim]
+        query_features = torch.cat(
+            [
+                fourier_features,
+                t_src_emb,
+                t_tgt_emb,
+                t_cam_emb,
+                patch_features,
+            ],
+            dim=-1,
+        )  # [B, N, total_dim]
 
         # Project to output dimension
         query_embeddings = self.projection(query_features)  # [B, N, output_dim]

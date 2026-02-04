@@ -1,14 +1,12 @@
 """Kubric synthetic dataset loader for D4RT."""
 
-import os
-import torch
+import json
 import numpy as np
+import torch
 from pathlib import Path
 from typing import Dict, Optional, Tuple
-import json
 
 from ..base_dataset import BaseVideoDataset, CameraParameters
-from ..query_sampling import QuerySampler, extract_ground_truth_at_queries
 
 
 class KubricDataset(BaseVideoDataset):
@@ -39,12 +37,11 @@ class KubricDataset(BaseVideoDataset):
     def __init__(
         self,
         data_dir: str,
-        split: str = 'train',
+        split: str = "train",
         num_frames: int = 48,
         resolution: Tuple[int, int] = (256, 256),
         num_queries: int = 2048,
         transform: Optional[object] = None,
-        query_sampler: Optional[QuerySampler] = None,
     ):
         """
         Initialize Kubric dataset.
@@ -56,11 +53,8 @@ class KubricDataset(BaseVideoDataset):
             resolution: Target resolution (H, W)
             num_queries: Number of queries to sample
             transform: Optional transforms
-            query_sampler: Query sampling strategy
         """
         super().__init__(data_dir, split, num_frames, resolution, num_queries, transform)
-
-        self.query_sampler = query_sampler or QuerySampler(num_queries=num_queries)
 
         # Find all scenes
         split_dir = Path(data_dir) / split
@@ -71,8 +65,8 @@ class KubricDataset(BaseVideoDataset):
         all_dirs = sorted([d for d in split_dir.iterdir() if d.is_dir()])
         self.samples = []
         for scene_dir in all_dirs:
-            rgb_dir = scene_dir / 'rgb'
-            if rgb_dir.exists() and len(list(rgb_dir.glob('*.png'))) > 0:
+            rgb_dir = scene_dir / "rgb"
+            if rgb_dir.exists() and len(list(rgb_dir.glob("*.png"))) > 0:
                 self.samples.append(scene_dir)
 
         if len(self.samples) == 0:
@@ -85,8 +79,8 @@ class KubricDataset(BaseVideoDataset):
         scene_dir = self.samples[idx]
 
         # Load RGB frames
-        rgb_dir = scene_dir / 'rgb'
-        frame_files = sorted(rgb_dir.glob('*.png'))
+        rgb_dir = scene_dir / "rgb"
+        frame_files = sorted(rgb_dir.glob("*.png"))
 
         # Skip scenes with no frames
         if len(frame_files) == 0:
@@ -104,7 +98,8 @@ class KubricDataset(BaseVideoDataset):
             frame_path = frame_files[frame_idx]
             # Load and convert to tensor
             from PIL import Image
-            img = Image.open(frame_path).convert('RGB')
+
+            img = Image.open(frame_path).convert("RGB")
             img = img.resize((self.resolution[1], self.resolution[0]))  # (W, H)
             img_tensor = torch.from_numpy(np.array(img)).permute(2, 0, 1).float() / 255.0
             frames.append(img_tensor)
@@ -112,9 +107,9 @@ class KubricDataset(BaseVideoDataset):
         frames = torch.stack(frames, dim=0)  # [T, 3, H, W]
 
         # Load camera parameters
-        camera_file = scene_dir / 'camera.json'
+        camera_file = scene_dir / "camera.json"
         if camera_file.exists():
-            with open(camera_file, 'r') as f:
+            with open(camera_file, "r") as f:
                 camera_data = json.load(f)
 
             # Parse camera parameters (format depends on Kubric version)
@@ -132,9 +127,7 @@ class KubricDataset(BaseVideoDataset):
                 intrinsics.append(torch.from_numpy(K))
 
                 # Identity extrinsics (world = camera frame)
-                T_mat = CameraParameters.create_extrinsics(
-                    np.eye(3), np.zeros(3)
-                )
+                T_mat = CameraParameters.create_extrinsics(np.eye(3), np.zeros(3))
                 extrinsics.append(torch.from_numpy(T_mat))
 
             intrinsics = torch.stack(intrinsics, dim=0)
@@ -152,125 +145,127 @@ class KubricDataset(BaseVideoDataset):
             extrinsics = torch.from_numpy(T_mat).unsqueeze(0).repeat(T, 1, 1)
 
         return {
-            'frames': frames,
-            'cameras': {
-                'intrinsics': intrinsics,
-                'extrinsics': extrinsics,
+            "frames": frames,
+            "cameras": {
+                "intrinsics": intrinsics,
+                "extrinsics": extrinsics,
             },
-            'metadata': {
-                'scene_id': scene_dir.name,
-                'split': self.split,
+            "metadata": {
+                "scene_id": scene_dir.name,
+                "split": self.split,
             },
         }
 
     def _load_ground_truth(self, idx: int, video_data: Dict) -> Dict:
-        """Load ground truth for queries."""
+        """
+        Load ground truth for queries from tracks.npz.
+
+        Uses tracks_3d directly as ground truth instead of computing from depth maps.
+        This fixes the bug where depth-computed 3D positions had invalid values
+        at background pixels.
+
+        tracks.npz format:
+        - query_points: [N, 3] with format [t_src, v, u] (frame index, y, x)
+        - tracks_2d: [N, T, 2] with format [u, v] (x, y)
+        - tracks_3d: [N, T, 3] with format [X, Y, Z]
+        - visibility: [N, T] binary mask
+        """
         scene_dir = self.samples[idx]
-        frames = video_data['frames']
+        frames = video_data["frames"]
         T, C, H, W = frames.shape
 
-        # Load depth maps
-        depth_dir = scene_dir / 'depth'
-        if depth_dir.exists():
-            # Try PNG first, then NPY
-            depth_files = sorted(depth_dir.glob('*.png'))
-            if not depth_files:
-                depth_files = sorted(depth_dir.glob('*.npy'))
+        # Load tracks from tracks.npz (CRITICAL: use tracks_3d directly)
+        tracks_file = scene_dir / "tracks.npz"
+        if not tracks_file.exists():
+            raise ValueError(f"tracks.npz not found in {scene_dir}. Cannot load ground truth.")
 
-            depth_maps = []
+        tracks_data = np.load(tracks_file)
 
-            for depth_file in depth_files[:T]:
-                if depth_file.suffix == '.png':
-                    from PIL import Image
-                    depth_img = Image.open(depth_file)
-                    depth_array = np.array(depth_img).astype(np.float32) / 1000.0  # Convert to meters
-                elif depth_file.suffix == '.npy':
-                    depth_array = np.load(depth_file).astype(np.float32)
-                else:
-                    continue
+        # Required fields
+        required_fields = ["tracks_3d", "tracks_2d", "visibility", "query_points"]
+        missing = [f for f in required_fields if f not in tracks_data]
+        if missing:
+            raise ValueError(f"tracks.npz must contain {required_fields}, missing: {missing}")
 
-                depth_array = torch.from_numpy(depth_array)
-                # Resize if needed
-                if depth_array.shape != (H, W):
-                    depth_array = torch.nn.functional.interpolate(
-                        depth_array.unsqueeze(0).unsqueeze(0),
-                        size=(H, W),
-                        mode='nearest',
-                    ).squeeze()
-                depth_maps.append(depth_array)
+        all_tracks_3d = torch.from_numpy(tracks_data["tracks_3d"]).float()  # [N, T_track, 3]
+        all_tracks_2d = torch.from_numpy(
+            tracks_data["tracks_2d"]
+        ).float()  # [N, T_track, 2] format: [u, v]
+        all_visibility = torch.from_numpy(tracks_data["visibility"]).float()  # [N, T_track]
+        all_query_points = tracks_data["query_points"]  # [N, 3] format: [t_src, v, u]
 
-            if depth_maps:
-                depth_maps = torch.stack(depth_maps, dim=0)  # [T, H, W]
-                visibility = depth_maps > 0  # Simple visibility mask
-            else:
-                # No depth files found
-                depth_maps = torch.ones(T, H, W) * 5.0  # Assume 5m depth
-                visibility = torch.ones(T, H, W, dtype=torch.bool)
-        else:
-            # Generate synthetic depth if not available
-            depth_maps = torch.ones(T, H, W) * 5.0  # Assume 5m depth
-            visibility = torch.ones(T, H, W, dtype=torch.bool)
+        N_tracks, T_track, _ = all_tracks_3d.shape
 
-        # Compute 3D positions from depth
-        points_3d = self._depth_to_3d(
-            depth_maps,
-            video_data['cameras']['intrinsics'],
-            video_data['cameras']['extrinsics'],
-        )  # [T, H, W, 3]
+        # Handle frame count mismatch (tracks.npz may have 24 frames, we want T frames)
+        if T_track != T:
+            # Sample frames uniformly to match our T
+            frame_indices = np.linspace(0, T_track - 1, T, dtype=int)
+            all_tracks_3d = all_tracks_3d[:, frame_indices, :]
+            all_tracks_2d = all_tracks_2d[:, frame_indices, :]
+            all_visibility = all_visibility[:, frame_indices]
+            # Also update T_track for consistency
+            T_track = T
 
-        # Sample queries
-        queries = self.query_sampler.sample_queries(
-            video_shape=(T, C, H, W),
-            visibility_mask=visibility,
-            depth_map=depth_maps,
-            points_3d=points_3d,
-        )
+        # Sample num_queries tracks
+        num_queries = min(self.num_queries, N_tracks)
+        track_indices = torch.randperm(N_tracks)[:num_queries]
 
-        # Load tracked positions if available (CRITICAL FIX for paper-correct tracking)
-        tracked_positions = None
-        tracks_file = scene_dir / 'tracks.npz'
-        if tracks_file.exists():
-            try:
-                tracks_data = np.load(tracks_file)
-                # tracks.npz contains: 'tracks_2d' [N_tracks, T, 2] in pixel coordinates
-                # Check for both 'tracks_2d' (TAP-Vid format) and 'tracks' (fallback)
-                if 'tracks_2d' in tracks_data:
-                    all_tracks = torch.from_numpy(tracks_data['tracks_2d']).float()  # [N_tracks, T, 2]
-                elif 'tracks' in tracks_data:
-                    all_tracks = torch.from_numpy(tracks_data['tracks']).float()  # [N_tracks, T, 2]
-                else:
-                    print(f"Warning: No tracks_2d or tracks found in {tracks_file}")
-                    all_tracks = None
+        # Get sampled data
+        tracks_3d = all_tracks_3d[track_indices]  # [num_queries, T, 3]
+        tracks_2d = all_tracks_2d[track_indices]  # [num_queries, T, 2]
+        visibility = all_visibility[track_indices]  # [num_queries, T]
+        query_points = all_query_points[track_indices]  # [num_queries, 3] format: [t_src, v, u]
 
-                if all_tracks is not None:
-                    N_tracks = all_tracks.shape[0]
+        # Sample target frames for each query
+        t_tgt = torch.randint(0, T, (num_queries,))  # [num_queries]
 
-                    # Sample num_queries tracks (or fewer if not enough tracks)
-                    num_queries = len(queries['u'])
-                    if N_tracks >= num_queries:
-                        track_indices = torch.randperm(N_tracks)[:num_queries]
-                        tracked_positions = all_tracks[track_indices]  # [num_queries, T, 2]
-                    else:
-                        # Not enough tracks - use what we have
-                        tracked_positions = all_tracks[:num_queries]  # [min(N_tracks, num_queries), T, 2]
-            except Exception as e:
-                print(f"Warning: Failed to load tracks from {tracks_file}: {e}")
-                tracked_positions = None
+        # Convert query_points format [t_src, v, u] to our query format
+        t_src = torch.from_numpy(query_points[:, 0]).long()  # frame index
+        v = torch.from_numpy(query_points[:, 1]).float()  # y coordinate (row)
+        u = torch.from_numpy(query_points[:, 2]).float()  # x coordinate (col)
 
-        # Extract ground truth at query locations
-        # CRITICAL: Pass tracked_positions to extract GT at TRACKED pixel locations
-        targets = extract_ground_truth_at_queries(
-            queries,
-            points_3d,
-            visibility,
-            video_data['cameras']['intrinsics'],
-            video_data['cameras']['extrinsics'],
-            tracked_positions=tracked_positions,
-        )
+        # Handle frame index rescaling if T changed
+        if tracks_data["tracks_3d"].shape[1] != T:
+            # Rescale t_src to match our frame count
+            original_T = tracks_data["tracks_3d"].shape[1]
+            t_src = (t_src.float() * (T - 1) / (original_T - 1)).round().long()
+            t_src = t_src.clamp(0, T - 1)
+
+        # Normalize coordinates to [0, 1] range
+        u_norm = u / (W - 1)  # Normalize u to [0, 1]
+        v_norm = v / (H - 1)  # Normalize v to [0, 1]
+
+        # Build queries dict
+        # t_cam is the camera reference frame, typically same as t_tgt for point tracking
+        queries = {
+            "u": u_norm,  # [num_queries] normalized x coordinate
+            "v": v_norm,  # [num_queries] normalized y coordinate
+            "t_src": t_src.float(),  # [num_queries] source frame
+            "t_tgt": t_tgt.float(),  # [num_queries] target frame
+            "t_cam": t_tgt.float(),  # [num_queries] camera frame (same as t_tgt)
+        }
+
+        # Extract ground truth at target frames
+        # Use batch indexing to get xyz, uv, and visibility at t_tgt
+        batch_indices = torch.arange(num_queries)
+        xyz = tracks_3d[batch_indices, t_tgt]  # [num_queries, 3]
+        uv_pixel = tracks_2d[batch_indices, t_tgt]  # [num_queries, 2] in pixel coordinates
+        vis = visibility[batch_indices, t_tgt]  # [num_queries]
+
+        # Normalize uv to [0, 1] range for consistency
+        uv_norm = torch.zeros_like(uv_pixel)
+        uv_norm[:, 0] = uv_pixel[:, 0] / (W - 1)  # u (x)
+        uv_norm[:, 1] = uv_pixel[:, 1] / (H - 1)  # v (y)
+
+        targets = {
+            "xyz": xyz,  # [num_queries, 3] - direct from tracks_3d
+            "uv": uv_norm,  # [num_queries, 2] - normalized 2D position at t_tgt
+            "visibility": vis.unsqueeze(-1),  # [num_queries, 1]
+        }
 
         return {
-            'queries': queries,
-            'targets': targets,
+            "queries": queries,
+            "targets": targets,
         }
 
     def _depth_to_3d(
@@ -296,7 +291,7 @@ class KubricDataset(BaseVideoDataset):
         v, u = torch.meshgrid(
             torch.arange(H, dtype=torch.float32),
             torch.arange(W, dtype=torch.float32),
-            indexing='ij',
+            indexing="ij",
         )
         u = u.to(depth_maps.device)
         v = v.to(depth_maps.device)
@@ -346,28 +341,28 @@ def create_kubric_dataloaders(
 
     # Training dataset
     train_dataset = KubricDataset(
-        data_dir=config['data_dir'],
-        split='train',
-        num_frames=config.get('num_frames', 48),
-        resolution=tuple(config.get('resolution', [256, 256])),
-        num_queries=config.get('num_queries', 2048),
+        data_dir=config["data_dir"],
+        split="train",
+        num_frames=config.get("num_frames", 48),
+        resolution=tuple(config.get("resolution", [256, 256])),
+        num_queries=config.get("num_queries", 2048),
         transform=get_train_transforms(config),
     )
 
     # Validation dataset
     val_dataset = KubricDataset(
-        data_dir=config['data_dir'],
-        split='val',
-        num_frames=config.get('num_frames', 48),
-        resolution=tuple(config.get('resolution', [256, 256])),
-        num_queries=config.get('num_queries', 1024),
+        data_dir=config["data_dir"],
+        split="val",
+        num_frames=config.get("num_frames", 48),
+        resolution=tuple(config.get("resolution", [256, 256])),
+        num_queries=config.get("num_queries", 1024),
         transform=get_val_transforms(),
     )
 
     # Create dataloaders
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_size=config.get('batch_size', 4),
+        batch_size=config.get("batch_size", 4),
         shuffle=True,
         num_workers=num_workers,
         pin_memory=True,
@@ -376,7 +371,7 @@ def create_kubric_dataloaders(
 
     val_loader = torch.utils.data.DataLoader(
         val_dataset,
-        batch_size=config.get('batch_size', 4),
+        batch_size=config.get("batch_size", 4),
         shuffle=False,
         num_workers=num_workers,
         pin_memory=True,
