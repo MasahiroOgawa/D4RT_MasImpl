@@ -1,8 +1,6 @@
 # Training configuration for 50k steps on full MOVi-A with paper losses
 # Combines 50k training scale with exact paper loss functions from Phase 13.5
-
-defaults:
-  - /model: vit_b_movi
+# Model config is loaded from configs/model/{model}.yaml
 
 experiment_name: d4rt_train_50k_movi_paper
 seed: 42
@@ -29,7 +27,7 @@ optimizer:
   weight_decay: 0.03
 
 scheduler:
-  type: cosine_with_warmup
+  type: cosine
   warmup_steps: 2500
   T_max: 50000
   eta_min: 1e-6
