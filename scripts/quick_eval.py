@@ -25,13 +25,19 @@ def main():
         default=10,
         help="Number of scenes to evaluate (default: 10 for quick check)",
     )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="vit_b_movi",
+        help="Model config name (default: vit_b_movi)",
+    )
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Load model
     print(f"Loading checkpoint: {args.checkpoint}")
-    model_config = OmegaConf.load("configs/model/vit_b_d4rt.yaml")
+    model_config = OmegaConf.load(f"configs/model/{args.model}.yaml")
     model = build_d4rt_model(model_config).to(device)
 
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
