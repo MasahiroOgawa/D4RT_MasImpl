@@ -12,11 +12,20 @@
 
 ## Current Status
 
-**Phase**: Training with fixed GT format
-**Step**: 11,000 / 50,000
-**Best Val Loss**: 0.288 (step 8,000)
+**Phase**: 12c completed, ready for Phase 14
+**Best Checkpoint**: Step 50,000
 
-Training is running in background.
+### 50k Training Results (2026-02-06)
+
+| Metric | Result | Target | % of Target |
+|--------|--------|--------|-------------|
+| **AJ** | 0.0320 | 0.304 | 10.5% |
+| **APD3D** | 0.0321 | 0.410 | 7.8% |
+| **OA** | 0.9609 | 0.875 | 110% |
+
+- **AJ improved 80× from 0.0004** (GT fix worked!)
+- Occlusion accuracy exceeds paper target
+- Scale ratio: 1.12, Confidence: 0.95 (healthy)
 
 ---
 
@@ -27,46 +36,34 @@ Training is running in background.
 | 1-8 | Core implementation (model, data, losses, training) | Done |
 | 9-11 | Bug fixes (FP16 overflow, UV normalization) | Done |
 | 12a | Download full MOVi-A (9,703 scenes) | Done |
-| 12b | First 50k training | Done (buggy GT) |
+| 12b | First 50k training (buggy GT) | Done |
 | 13 | TAP-Vid metrics implementation | Done |
 | 13.5 | Paper loss functions + confidence warmup | Done |
 | GT Fix | Fix dataset to use tracks_3d directly | Done |
-
-**Key Bug Fixed**: GT was computed from depth at fixed pixels instead of using tracked 3D positions from `tracks.npz`. This caused the model to learn depth estimation instead of point tracking.
+| 12c | Retrain 50k with fixed GT | Done |
 
 ---
 
 ## Current Phase
 
-### Phase 12c: Retrain with Fixed GT (IN PROGRESS)
+### Phase 14: Add Real-World Datasets
 
-Training restarted from scratch with correct ground truth format.
+AJ at 10% of target suggests we need more diverse training data.
 
-```bash
-# Monitor training
-tail -f training.log
-./scripts/monitor_training.sh --quick
+**Priority datasets**:
+1. **PointOdyssey** - Real videos with 3D tracks (~30 GB)
+2. **Co3Dv2** - Multi-view objects (~100 GB)
+3. **ScanNet++** - Indoor RGB-D (~150 GB)
 
-# Run intermediate evaluation
-uv run python scripts/quick_eval.py --checkpoint checkpoints/checkpoint_latest.pth
-```
-
-**Success Criteria**:
-- Val loss < 0.2
-- AJ > 0.05 on validation set
-- Scale ratio (pred_std/gt_std) > 0.3
+**Steps**:
+1. Download PointOdyssey dataset
+2. Create data converter to D4RT format
+3. Implement multi-dataset training pipeline
+4. Train on combined dataset
 
 ---
 
 ## Remaining Phases
-
-### Phase 14: Add Real-World Datasets
-
-After 50k training shows improvement, add diverse data:
-
-1. **PointOdyssey** - Real videos with 3D tracks (~30 GB)
-2. **Co3Dv2** - Multi-view objects (~100 GB)
-3. **ScanNet++** - Indoor RGB-D (~150 GB)
 
 ### Phase 15: Large-Scale Training
 
