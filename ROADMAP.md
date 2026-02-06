@@ -46,20 +46,24 @@
 
 ## Current Phase
 
-### Phase 14: Add Real-World Datasets
+### Phase 14: Add Real-World Datasets (In Progress)
 
 AJ at 10% of target suggests we need more diverse training data.
 
-**Priority datasets**:
-1. **PointOdyssey** - Real videos with 3D tracks (~30 GB)
-2. **Co3Dv2** - Multi-view objects (~100 GB)
-3. **ScanNet++** - Indoor RGB-D (~150 GB)
+**Progress**:
+- [x] Created `PointOdysseyDataset` loader (`d4rt/data/datasets/pointodyssey.py`)
+- [x] Created `MultiDataset` with weighted sampling (`d4rt/data/datasets/multi_dataset.py`)
+- [x] Updated training script to support multi-dataset
+- [x] Created `train_multidataset.yaml` config
+- [x] Tested pipeline with Kubric + PointOdyssey sample
+- [ ] Downloading PointOdyssey val split (~20GB)
+- [ ] Train on Kubric + PointOdyssey val
+- [ ] Download PointOdyssey train split (~134GB)
 
-**Steps**:
-1. Download PointOdyssey dataset
-2. Create data converter to D4RT format
-3. Implement multi-dataset training pipeline
-4. Train on combined dataset
+**Priority datasets**:
+1. **PointOdyssey** - Synthetic videos with dense 3D tracks (val: 20 GB, train: 134 GB)
+2. **Co3Dv2** - Multi-view objects (~100 GB) [future]
+3. **ScanNet++** - Indoor RGB-D (~150 GB) [future]
 
 ---
 
@@ -81,15 +85,20 @@ Run on official benchmarks:
 ## Quick Reference
 
 ```bash
-# Resume training
+# Multi-dataset training (Kubric + PointOdyssey)
+uv run python scripts/train.py --config-name=train_multidataset \
+    +training.resume_from=checkpoints/checkpoint_step_0050000.pth
+
+# Single-dataset training (Kubric only)
 uv run python scripts/train.py --config-name=train_50k_movi_paper \
     +training.resume_from=checkpoints/checkpoint_latest.pth
 
 # Quick evaluation (10 scenes)
 uv run python scripts/quick_eval.py --checkpoint checkpoints/checkpoint_latest.pth
 
-# Full evaluation (all val scenes)
-uv run python scripts/quick_eval.py --checkpoint checkpoints/checkpoint_latest.pth --num_scenes 20
+# Download PointOdyssey
+uv run python scripts/download_pointodyssey.py --split val   # ~20GB
+uv run python scripts/download_pointodyssey.py --split train # ~134GB
 ```
 
 ---
