@@ -98,13 +98,20 @@ class PointOdysseyDataset(Dataset):
         frames = []
         for fi in frame_indices:
             if fi < len(rgb_files):
-                img = Image.open(rgb_files[fi]).convert("RGB")
-                img = img.resize((self.resolution[1], self.resolution[0]), Image.BILINEAR)
-                frames.append(np.array(img))
+                try:
+                    img = Image.open(rgb_files[fi]).convert("RGB")
+                    img.load()  # Force load to detect truncated images
+                    img = img.resize((self.resolution[1], self.resolution[0]), Image.BILINEAR)
+                    frames.append(np.array(img))
+                except (OSError, IOError) as e:
+                    # Handle corrupted/truncated images - use previous frame or zeros
+                    frames.append(
+                        frames[-1].copy() if frames else np.zeros((*self.resolution, 3), dtype=np.uint8)
+                    )
             else:
                 # Repeat last frame if needed
                 frames.append(
-                    frames[-1] if frames else np.zeros((*self.resolution, 3), dtype=np.uint8)
+                    frames[-1].copy() if frames else np.zeros((*self.resolution, 3), dtype=np.uint8)
                 )
 
         video = np.stack(frames, axis=0)  # (T, H, W, 3)
@@ -112,8 +119,11 @@ class PointOdysseyDataset(Dataset):
 
         # Get original resolution for coordinate scaling
         if rgb_files:
-            orig_img = Image.open(rgb_files[0])
-            orig_h, orig_w = orig_img.height, orig_img.width
+            try:
+                orig_img = Image.open(rgb_files[0])
+                orig_h, orig_w = orig_img.height, orig_img.width
+            except (OSError, IOError):
+                orig_h, orig_w = self.resolution
         else:
             orig_h, orig_w = self.resolution
 
