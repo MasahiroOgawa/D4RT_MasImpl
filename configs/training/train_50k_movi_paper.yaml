@@ -6,6 +6,10 @@ experiment_name: d4rt_train_50k_movi_paper
 seed: 42
 model: vit_b_movi
 
+# CRITICAL: VideoMAE pretrained weights for encoder
+# Paper ablation (Table 11): Random init = 0.738 depth error, VideoMAE = 0.302
+pretrained_weights: pretrained/videomae_vit_b_k400_800e.pth
+
 training:
   max_steps: 50000
   batch_size: 1

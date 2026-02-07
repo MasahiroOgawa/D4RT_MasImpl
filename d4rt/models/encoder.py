@@ -353,6 +353,29 @@ def load_videomae_weights(
     new_state_dict = {}
     unexpected_keys = []
 
+    # First pass: collect q_bias and v_bias for each block
+    block_biases = {}
+    embed_dim = None
+
+    for old_key, value in state_dict.items():
+        if not old_key.startswith('encoder.'):
+            continue
+        key = old_key[8:]
+
+        if '.attn.qkv.weight' in key:
+            embed_dim = value.shape[0] // 3
+
+        if '.attn.q_bias' in key:
+            block_idx = key.split('.')[1]
+            if block_idx not in block_biases:
+                block_biases[block_idx] = {}
+            block_biases[block_idx]['q'] = value
+        elif '.attn.v_bias' in key:
+            block_idx = key.split('.')[1]
+            if block_idx not in block_biases:
+                block_biases[block_idx] = {}
+            block_biases[block_idx]['v'] = value
+
     for old_key, value in state_dict.items():
         # Only process encoder keys (VideoMAE has encoder. prefix)
         if not old_key.startswith('encoder.'):
@@ -393,16 +416,16 @@ def load_videomae_weights(
                     new_state_dict[new_key] = value
                 elif parts[2] == 'attn':
                     if parts[3] == 'qkv' and parts[4] == 'weight':
-                        # Split fused QKV weight and map to global attention
-                        embed_dim = value.shape[0] // 3
-                        q, k, v = value.split(embed_dim, dim=0)
                         new_state_dict[f'blocks.{block_idx}.global_attn.in_proj_weight'] = value
-                    elif parts[3] == 'q_bias':
-                        # Store for later combination
-                        pass  # Handled with qkv
-                    elif parts[3] == 'v_bias':
-                        # Store for later combination
-                        pass  # Handled with qkv
+                        # Construct in_proj_bias from q_bias, zeros (k), v_bias
+                        if block_idx in block_biases:
+                            q_bias = block_biases[block_idx].get('q', torch.zeros(embed_dim))
+                            k_bias = torch.zeros(embed_dim)
+                            v_bias = block_biases[block_idx].get('v', torch.zeros(embed_dim))
+                            in_proj_bias = torch.cat([q_bias, k_bias, v_bias], dim=0)
+                            new_state_dict[f'blocks.{block_idx}.global_attn.in_proj_bias'] = in_proj_bias
+                    elif parts[3] == 'q_bias' or parts[3] == 'v_bias':
+                        pass  # Handled above with qkv weight
                     elif parts[3] == 'proj' and parts[4] == 'weight':
                         new_state_dict[f'blocks.{block_idx}.global_attn.out_proj.weight'] = value
                     elif parts[3] == 'proj' and parts[4] == 'bias':
@@ -425,6 +448,15 @@ def load_videomae_weights(
                 elif parts[2] == 'attn':
                     if parts[3] == 'qkv' and parts[4] == 'weight':
                         new_state_dict[f'blocks.{block_idx}.self_attn.in_proj_weight'] = value
+                        # Construct in_proj_bias from q_bias, zeros (k), v_bias
+                        if block_idx in block_biases:
+                            q_bias = block_biases[block_idx].get('q', torch.zeros(embed_dim))
+                            k_bias = torch.zeros(embed_dim)
+                            v_bias = block_biases[block_idx].get('v', torch.zeros(embed_dim))
+                            in_proj_bias = torch.cat([q_bias, k_bias, v_bias], dim=0)
+                            new_state_dict[f'blocks.{block_idx}.self_attn.in_proj_bias'] = in_proj_bias
+                    elif parts[3] == 'q_bias' or parts[3] == 'v_bias':
+                        pass  # Handled above with qkv weight
                     elif parts[3] == 'proj' and parts[4] == 'weight':
                         new_state_dict[f'blocks.{block_idx}.self_attn.out_proj.weight'] = value
                     elif parts[3] == 'proj' and parts[4] == 'bias':

@@ -13,6 +13,7 @@ from omegaconf import DictConfig, OmegaConf
 import os
 
 from d4rt.models import build_d4rt_model
+from d4rt.models.encoder import load_videomae_weights
 from d4rt.losses import build_composite_loss
 from d4rt.training import D4RTTrainer
 from d4rt.data.datasets.kubric import create_kubric_dataloaders
@@ -109,6 +110,21 @@ def main(config: DictConfig):
     model_config = OmegaConf.load(model_config_path)
 
     model = build_d4rt_model(model_config)
+
+    # Load pretrained weights (VideoMAE) if specified
+    pretrained_path = config.get("pretrained_weights", None)
+    if pretrained_path and Path(pretrained_path).exists():
+        print(f"\nLoading pretrained weights from: {pretrained_path}")
+        missing_keys, unexpected_keys = load_videomae_weights(
+            model.encoder, pretrained_path, strict=False
+        )
+        print(f"  Loaded pretrained encoder weights")
+        print(f"  Missing keys (expected): {len(missing_keys)}")
+    elif pretrained_path:
+        print(f"\nWarning: Pretrained weights not found at {pretrained_path}")
+        print("  Training from scratch (this may hurt depth learning!)")
+    else:
+        print("\nNo pretrained weights specified - training from scratch")
 
     # Print model info
     if local_rank == 0:

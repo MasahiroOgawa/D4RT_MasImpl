@@ -23,6 +23,11 @@ encoder:
   # Gradient checkpointing
   use_checkpoint: true
 
+  # Use legacy blocks (global-only attention) to match VideoMAE structure
+  # This enables proper transfer of VideoMAE pretrained weights
+  # Paper's local+global may have been added after pretraining
+  use_paper_blocks: false
+
 # Decoder configuration
 decoder:
   name: CrossAttentionDecoder
