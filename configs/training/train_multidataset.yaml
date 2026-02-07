@@ -8,15 +8,16 @@ model: vit_b_movi
 training:
   max_steps: 100000  # Extended training for multi-dataset
   batch_size: 1
-  num_workers: 0
+  num_workers: 2  # Reduced to avoid DataLoader deadlock
   gradient_accumulation_steps: 4  # Effective batch size of 4
   mixed_precision: false  # FP32 for stability
   gradient_checkpointing: true
   clip_grad_norm: 1.0
   log_every_n_steps: 100
-  val_every_n_steps: 1000
+  val_every_n_steps: 10000  # Less frequent (background monitor runs every 10 min anyway)
   save_every_n_steps: 5000
   num_queries_per_step: 128
+  resume_from: checkpoints/checkpoint_step_0064000.pth
 
 optimizer:
   type: adamw

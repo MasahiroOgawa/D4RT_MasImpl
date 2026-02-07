@@ -67,12 +67,12 @@ class D4RTCompositeLoss(nn.Module):
 
         # Default weights from paper
         default_weights = {
-            'l1_3d': 1.0,      # λ3D
-            'l2_2d': 0.1,      # λ2D (UV loss)
-            'normal': 0.5,     # λnormal
-            'motion': 0.1,     # λdisp
-            'visibility': 0.1, # λvis
-            'confidence': 0.2, # λconf (penalty weight)
+            "l1_3d": 1.0,  # λ3D
+            "l2_2d": 0.1,  # λ2D (UV loss)
+            "normal": 0.5,  # λnormal
+            "motion": 0.1,  # λdisp
+            "visibility": 0.1,  # λvis
+            "confidence": 0.2,  # λconf (penalty weight)
         }
 
         # Merge custom weights with defaults
@@ -82,21 +82,21 @@ class D4RTCompositeLoss(nn.Module):
             self.loss_weights = default_weights
 
         # Store individual lambda values
-        self.lambda_3d = self.loss_weights['l1_3d']
-        self.lambda_2d = self.loss_weights['l2_2d']
-        self.lambda_vis = self.loss_weights['visibility']
-        self.lambda_disp = self.loss_weights['motion']
-        self.lambda_conf = self.loss_weights['confidence']
-        self.lambda_normal = self.loss_weights['normal']
+        self.lambda_3d = self.loss_weights["l1_3d"]
+        self.lambda_2d = self.loss_weights["l2_2d"]
+        self.lambda_vis = self.loss_weights["visibility"]
+        self.lambda_disp = self.loss_weights["motion"]
+        self.lambda_conf = self.loss_weights["confidence"]
+        self.lambda_normal = self.loss_weights["normal"]
 
         # Individual loss functions (used for non-paper mode or components)
-        use_paper_3d = loss_weights.get('use_paper_formula_3d', True) if loss_weights else True
+        use_paper_3d = loss_weights.get("use_paper_formula_3d", True) if loss_weights else True
         self.l1_3d_loss = L1_3DLoss(use_paper_formula=use_paper_3d)
-        self.uv_loss = UVLoss(loss_type='l2')
+        self.uv_loss = UVLoss(loss_type="l2")
         self.visibility_loss = VisibilityLoss()
         self.normal_loss = NormalLoss()
         self.motion_loss = MotionLoss()
-        self.projection_2d_loss = Projection2DLoss(loss_type='l2')
+        self.projection_2d_loss = Projection2DLoss(loss_type="l2")
 
     def set_step(self, step: int):
         """Set the current training step for warmup scheduling."""
@@ -176,22 +176,24 @@ class D4RTCompositeLoss(nn.Module):
             L = c*λ3D*L3D - λconf*log(c) + λ2D*L2D + λvis*Lvis + λdisp*Ldisp + λnormal*Lnormal
         """
         loss_dict = {}
-        device = predictions['xyz'].device
-        B, N, _ = predictions['xyz'].shape
+        device = predictions["xyz"].device
+        B, N, _ = predictions["xyz"].shape
 
         # Get confidence (apply sigmoid and clamp to avoid log(0))
-        conf_logits = predictions.get('confidence', torch.zeros(B, N, 1, device=device))
+        conf_logits = predictions.get("confidence", torch.zeros(B, N, 1, device=device))
         c = torch.sigmoid(conf_logits).clamp(min=1e-6, max=1 - 1e-6)  # [B, N, 1]
 
         # ========== L3D: L1 loss on 3D positions (per-query) ==========
-        if 'xyz' in targets:
+        if "xyz" in targets:
             # Compute per-query L1 loss
-            pred_xyz = predictions['xyz']
-            gt_xyz = targets['xyz']
+            pred_xyz = predictions["xyz"]
+            gt_xyz = targets["xyz"]
 
-            # Apply paper's normalization: normalize by GT mean depth
+            # Paper's normalization: each normalized by its OWN mean depth
+            # "both the target and the estimated point sets are normalized by their respective mean depths"
+            pred_mean_depth = pred_xyz[..., 2:3].mean(dim=1, keepdim=True)  # [B, 1, 1]
             gt_mean_depth = gt_xyz[..., 2:3].mean(dim=1, keepdim=True)  # [B, 1, 1]
-            pred_norm = pred_xyz / (gt_mean_depth + 1e-8)
+            pred_norm = pred_xyz / (pred_mean_depth + 1e-8)
             gt_norm = gt_xyz / (gt_mean_depth + 1e-8)
 
             # Apply signed log transform
@@ -199,57 +201,59 @@ class D4RTCompositeLoss(nn.Module):
             gt_transformed = torch.sign(gt_norm) * torch.log(1 + torch.abs(gt_norm))
 
             # Per-query L1 loss (sum over xyz dimensions)
-            L3D = torch.abs(pred_transformed - gt_transformed).sum(dim=-1, keepdim=True)  # [B, N, 1]
-            loss_dict['loss_3d_raw'] = L3D.mean().item()
+            L3D = torch.abs(pred_transformed - gt_transformed).sum(
+                dim=-1, keepdim=True
+            )  # [B, N, 1]
+            loss_dict["loss_3d_raw"] = L3D.mean().item()
         else:
             L3D = torch.zeros(B, N, 1, device=device)
-            loss_dict['loss_3d_raw'] = 0.0
+            loss_dict["loss_3d_raw"] = 0.0
 
         # ========== L2D: L2 loss on 2D coordinates (per-query) ==========
-        if 'uv' in predictions and 'uv' in targets:
-            pred_uv = predictions['uv']
-            gt_uv = targets['uv']
+        if "uv" in predictions and "uv" in targets:
+            pred_uv = predictions["uv"]
+            gt_uv = targets["uv"]
             L2D = ((pred_uv - gt_uv) ** 2).sum(dim=-1, keepdim=True)  # [B, N, 1]
-            loss_dict['loss_2d_raw'] = L2D.mean().item()
+            loss_dict["loss_2d_raw"] = L2D.mean().item()
         else:
             L2D = torch.zeros(B, N, 1, device=device)
-            loss_dict['loss_2d_raw'] = 0.0
+            loss_dict["loss_2d_raw"] = 0.0
 
         # ========== Lvis: Binary cross-entropy on visibility (per-query) ==========
-        if 'visibility' in predictions and 'visibility' in targets:
-            pred_vis = predictions['visibility']  # [B, N, 1] logits
-            gt_vis = targets['visibility']
+        if "visibility" in predictions and "visibility" in targets:
+            pred_vis = predictions["visibility"]  # [B, N, 1] logits
+            gt_vis = targets["visibility"]
             if gt_vis.dim() == 2:
                 gt_vis = gt_vis.unsqueeze(-1)  # [B, N] -> [B, N, 1]
             Lvis = F.binary_cross_entropy_with_logits(
-                pred_vis, gt_vis.float(), reduction='none'
+                pred_vis, gt_vis.float(), reduction="none"
             )  # [B, N, 1]
-            loss_dict['loss_visibility_raw'] = Lvis.mean().item()
+            loss_dict["loss_visibility_raw"] = Lvis.mean().item()
         else:
             Lvis = torch.zeros(B, N, 1, device=device)
-            loss_dict['loss_visibility_raw'] = 0.0
+            loss_dict["loss_visibility_raw"] = 0.0
 
         # ========== Ldisp: L1 loss on motion displacement (per-query) ==========
-        if 'motion' in predictions and 'motion' in targets:
-            pred_motion = predictions['motion']
-            gt_motion = targets['motion']
+        if "motion" in predictions and "motion" in targets:
+            pred_motion = predictions["motion"]
+            gt_motion = targets["motion"]
             Ldisp = torch.abs(pred_motion - gt_motion).sum(dim=-1, keepdim=True)  # [B, N, 1]
-            loss_dict['loss_motion_raw'] = Ldisp.mean().item()
+            loss_dict["loss_motion_raw"] = Ldisp.mean().item()
         else:
             Ldisp = torch.zeros(B, N, 1, device=device)
-            loss_dict['loss_motion_raw'] = 0.0
+            loss_dict["loss_motion_raw"] = 0.0
 
         # ========== Lnormal: Cosine loss on surface normals (per-query) ==========
-        if 'normals' in predictions and 'normals' in targets:
-            pred_normals = predictions['normals']
-            gt_normals = targets['normals']
+        if "normals" in predictions and "normals" in targets:
+            pred_normals = predictions["normals"]
+            gt_normals = targets["normals"]
             # Cosine distance: 1 - cos_sim
             cos_sim = F.cosine_similarity(pred_normals, gt_normals, dim=-1, eps=1e-8)
             Lnormal = (1 - cos_sim).unsqueeze(-1)  # [B, N, 1]
-            loss_dict['loss_normal_raw'] = Lnormal.mean().item()
+            loss_dict["loss_normal_raw"] = Lnormal.mean().item()
         else:
             Lnormal = torch.zeros(B, N, 1, device=device)
-            loss_dict['loss_normal_raw'] = 0.0
+            loss_dict["loss_normal_raw"] = 0.0
 
         # ========== Paper formula (per-query) ==========
         # L = c*λ3D*L3D - λconf*log(c) + λ2D*L2D + λvis*Lvis + λdisp*Ldisp + λnormal*Lnormal
@@ -271,10 +275,10 @@ class D4RTCompositeLoss(nn.Module):
             # When conf_weight=0: c_effective=1 (no confidence weighting)
             # When conf_weight=1: c_effective=c (full confidence weighting)
             c_effective = torch.ones_like(c) * (1 - conf_weight) + c * conf_weight
-            loss_dict['confidence_warmup_weight'] = conf_weight
+            loss_dict["confidence_warmup_weight"] = conf_weight
         else:
             c_effective = c
-            loss_dict['confidence_warmup_weight'] = 1.0
+            loss_dict["confidence_warmup_weight"] = 1.0
 
         # Confidence-weighted 3D loss: c_effective * λ3D * L3D
         conf_weighted_3d = c_effective * self.lambda_3d * L3D
@@ -285,10 +289,10 @@ class D4RTCompositeLoss(nn.Module):
 
         # Other losses (not confidence-weighted)
         other_losses = (
-            self.lambda_2d * L2D +
-            self.lambda_vis * Lvis +
-            self.lambda_disp * Ldisp +
-            self.lambda_normal * Lnormal
+            self.lambda_2d * L2D
+            + self.lambda_vis * Lvis
+            + self.lambda_disp * Ldisp
+            + self.lambda_normal * Lnormal
         )
 
         # Per-query total loss
@@ -298,15 +302,15 @@ class D4RTCompositeLoss(nn.Module):
         total_loss = per_query_loss.mean()
 
         # Store individual weighted losses for logging
-        loss_dict['loss_3d_weighted'] = conf_weighted_3d.mean().item()
-        loss_dict['loss_confidence_penalty'] = conf_penalty.mean().item()
-        loss_dict['c_effective_mean'] = c_effective.mean().item()
-        loss_dict['loss_2d'] = (self.lambda_2d * L2D).mean().item()
-        loss_dict['loss_visibility'] = (self.lambda_vis * Lvis).mean().item()
-        loss_dict['loss_motion'] = (self.lambda_disp * Ldisp).mean().item()
-        loss_dict['loss_normal'] = (self.lambda_normal * Lnormal).mean().item()
-        loss_dict['loss_total'] = total_loss.item()
-        loss_dict['mean_confidence'] = c.mean().item()
+        loss_dict["loss_3d_weighted"] = conf_weighted_3d.mean().item()
+        loss_dict["loss_confidence_penalty"] = conf_penalty.mean().item()
+        loss_dict["c_effective_mean"] = c_effective.mean().item()
+        loss_dict["loss_2d"] = (self.lambda_2d * L2D).mean().item()
+        loss_dict["loss_visibility"] = (self.lambda_vis * Lvis).mean().item()
+        loss_dict["loss_motion"] = (self.lambda_disp * Ldisp).mean().item()
+        loss_dict["loss_normal"] = (self.lambda_normal * Lnormal).mean().item()
+        loss_dict["loss_total"] = total_loss.item()
+        loss_dict["mean_confidence"] = c.mean().item()
 
         return total_loss, loss_dict
 
@@ -324,84 +328,84 @@ class D4RTCompositeLoss(nn.Module):
         This is for backward compatibility with existing training.
         """
         loss_dict = {}
-        device = predictions['xyz'].device
+        device = predictions["xyz"].device
 
         # 1. L1 3D Position Loss
-        if 'xyz' in targets:
+        if "xyz" in targets:
             loss_3d = self.l1_3d_loss(
-                predictions['xyz'],
-                targets['xyz'],
+                predictions["xyz"],
+                targets["xyz"],
                 scene_bounds,
             )
-            loss_dict['loss_3d'] = loss_3d.item()
+            loss_dict["loss_3d"] = loss_3d.item()
         else:
             loss_3d = torch.zeros(1, device=device, requires_grad=True)
-            loss_dict['loss_3d'] = 0.0
+            loss_dict["loss_3d"] = 0.0
 
         # 2. UV / 2D Loss
-        if 'uv' in predictions and 'uv' in targets:
-            loss_2d = self.uv_loss(predictions['uv'], targets['uv'])
-            loss_dict['loss_2d'] = loss_2d.item()
-        elif cameras is not None and queries is not None and 't_cam' in queries:
+        if "uv" in predictions and "uv" in targets:
+            loss_2d = self.uv_loss(predictions["uv"], targets["uv"])
+            loss_dict["loss_2d"] = loss_2d.item()
+        elif cameras is not None and queries is not None and "t_cam" in queries:
             loss_2d = self.projection_2d_loss(
-                predictions['xyz'],
-                targets['uv'],
-                cameras['intrinsics'],
-                cameras['extrinsics'],
-                queries['t_cam'],
+                predictions["xyz"],
+                targets["uv"],
+                cameras["intrinsics"],
+                cameras["extrinsics"],
+                queries["t_cam"],
             )
-            loss_dict['loss_2d'] = loss_2d.item()
+            loss_dict["loss_2d"] = loss_2d.item()
         else:
             loss_2d = torch.zeros(1, device=device, requires_grad=True)
-            loss_dict['loss_2d'] = 0.0
+            loss_dict["loss_2d"] = 0.0
 
         # 3. Visibility Loss
-        if 'visibility' in predictions and 'visibility' in targets:
+        if "visibility" in predictions and "visibility" in targets:
             loss_vis = self.visibility_loss(
-                predictions['visibility'],
-                targets['visibility'],
+                predictions["visibility"],
+                targets["visibility"],
             )
-            loss_dict['loss_visibility'] = loss_vis.item()
+            loss_dict["loss_visibility"] = loss_vis.item()
         else:
             loss_vis = torch.zeros(1, device=device, requires_grad=True)
-            loss_dict['loss_visibility'] = 0.0
+            loss_dict["loss_visibility"] = 0.0
 
         # 4. Normal Loss
-        if 'normals' in predictions and 'normals' in targets:
+        if "normals" in predictions and "normals" in targets:
             loss_normal = self.normal_loss(
-                predictions['normals'],
-                targets['normals'],
+                predictions["normals"],
+                targets["normals"],
             )
-            loss_dict['loss_normal'] = loss_normal.item()
+            loss_dict["loss_normal"] = loss_normal.item()
         else:
             loss_normal = torch.zeros(1, device=device, requires_grad=True)
-            loss_dict['loss_normal'] = 0.0
+            loss_dict["loss_normal"] = 0.0
 
         # 5. Motion Loss
-        if 'motion' in predictions and 'motion' in targets:
+        if "motion" in predictions and "motion" in targets:
             loss_motion = self.motion_loss(
-                predictions['motion'],
-                targets['motion'],
+                predictions["motion"],
+                targets["motion"],
             )
-            loss_dict['loss_motion'] = loss_motion.item()
+            loss_dict["loss_motion"] = loss_motion.item()
         else:
             loss_motion = torch.zeros(1, device=device, requires_grad=True)
-            loss_dict['loss_motion'] = 0.0
+            loss_dict["loss_motion"] = 0.0
 
         # Compute weighted total loss
         total_loss = (
-            self.lambda_3d * loss_3d +
-            self.lambda_2d * loss_2d +
-            self.lambda_normal * loss_normal +
-            self.lambda_disp * loss_motion +
-            self.lambda_vis * loss_vis
+            self.lambda_3d * loss_3d
+            + self.lambda_2d * loss_2d
+            + self.lambda_normal * loss_normal
+            + self.lambda_disp * loss_motion
+            + self.lambda_vis * loss_vis
         )
 
         # Ensure total_loss is a scalar
         if total_loss.dim() > 0:
             total_loss = total_loss.mean()
 
-        loss_dict['loss_total'] = total_loss.item()
+        loss_dict["loss_total"] = total_loss.item()
 
         return total_loss, loss_dict
 
@@ -420,9 +424,9 @@ def build_composite_loss(config: Dict) -> D4RTCompositeLoss:
     Returns:
         loss_fn: D4RTCompositeLoss instance
     """
-    loss_weights = config.get('loss_weights', {})
-    use_paper_formula = config.get('use_paper_formula', True)
-    confidence_warmup_steps = config.get('confidence_warmup_steps', 0)
+    loss_weights = config.get("loss_weights", {})
+    use_paper_formula = config.get("use_paper_formula", True)
+    confidence_warmup_steps = config.get("confidence_warmup_steps", 0)
     return D4RTCompositeLoss(
         loss_weights=loss_weights,
         use_paper_formula=use_paper_formula,

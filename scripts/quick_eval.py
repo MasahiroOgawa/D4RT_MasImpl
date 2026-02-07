@@ -31,6 +31,13 @@ def main():
         default="vit_b_movi",
         help="Model config name (default: vit_b_movi)",
     )
+    parser.add_argument(
+        "--alignment",
+        type=str,
+        default="scale_shift",
+        choices=["none", "scale", "shift", "scale_shift"],
+        help="Alignment method for evaluation (default: scale_shift, following paper)",
+    )
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -70,12 +77,13 @@ def main():
         with torch.no_grad():
             outputs = model(video, queries)
 
-        # Compute metrics
+        # Compute metrics with alignment (paper protocol)
         metrics = compute_tapvid_metrics(
             pred_xyz=outputs["xyz"].cpu().numpy(),
             pred_visibility=torch.sigmoid(outputs["visibility"]).cpu().numpy(),
             gt_xyz=targets["xyz"].cpu().numpy(),
             gt_visibility=targets["visibility"].cpu().numpy(),
+            alignment=args.alignment,
         )
         all_metrics.append(metrics)
 
@@ -86,6 +94,7 @@ def main():
 
     print(f"\n{'='*60}")
     print(f"INTERMEDIATE EVALUATION (Step {step}, {num_scenes} scenes)")
+    print(f"Alignment: {args.alignment}")
     print(f"{'='*60}")
     print(
         f"Average Jaccard (AJ):      {avg_metrics.get('average_jaccard', 0):.4f}  (target: 0.304)"
