@@ -1,0 +1,90 @@
+#!/bin/bash
+# Tmux-based training script with battery monitoring
+# Usage: ./scripts/train_tmux.sh [config_name] [resume_checkpoint]
+#
+# Features:
+# - Runs training in tmux (survives terminal close / laptop lid close)
+# - Battery monitoring: saves checkpoint and suspends when < 10%
+# - Easy to attach/detach: tmux attach -t d4rt
+#
+# Examples:
+#   ./scripts/train_tmux.sh                                    # Default config
+#   ./scripts/train_tmux.sh train_50k_movi_paper               # Specific config
+#   ./scripts/train_tmux.sh train_50k_movi_paper checkpoint.pth # Resume from checkpoint
+
+set -e
+
+# Configuration
+SESSION_NAME="d4rt"
+CONFIG_NAME="${1:-train_50k_movi_paper}"
+RESUME_CHECKPOINT="${2:-}"
+PROJECT_DIR="/home/mas/proj/study/D4RT_MasImpl"
+LOG_DIR="${PROJECT_DIR}/outputs"
+
+# Create log directory
+mkdir -p "$LOG_DIR"
+
+# Kill existing session if running
+if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+    echo "Killing existing tmux session: $SESSION_NAME"
+    tmux kill-session -t "$SESSION_NAME"
+    sleep 1
+fi
+
+# Build training command
+TRAIN_CMD="cd $PROJECT_DIR && uv run python scripts/train.py --config-name $CONFIG_NAME --config-path ../configs/training"
+if [ -n "$RESUME_CHECKPOINT" ]; then
+    TRAIN_CMD="$TRAIN_CMD +training.resume_from=$RESUME_CHECKPOINT"
+fi
+
+# Create timestamp for log files
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+TRAIN_LOG="${LOG_DIR}/training_${CONFIG_NAME}_${TIMESTAMP}.log"
+BATTERY_LOG="${LOG_DIR}/battery_monitor_${TIMESTAMP}.log"
+
+echo "=============================================="
+echo "D4RT Training in Tmux"
+echo "=============================================="
+echo "Session:    $SESSION_NAME"
+echo "Config:     $CONFIG_NAME"
+echo "Resume:     ${RESUME_CHECKPOINT:-None (fresh start)}"
+echo "Train log:  $TRAIN_LOG"
+echo "Battery log: $BATTERY_LOG"
+echo "=============================================="
+
+# Create tmux session with training window
+tmux new-session -d -s "$SESSION_NAME" -n training -c "$PROJECT_DIR"
+
+# Start training in the first window
+tmux send-keys -t "${SESSION_NAME}:training" "$TRAIN_CMD 2>&1 | tee $TRAIN_LOG" Enter
+
+# Wait a moment for training to start
+sleep 2
+
+# Create battery monitor window
+tmux new-window -t "$SESSION_NAME" -n battery -c "$PROJECT_DIR"
+tmux send-keys -t "${SESSION_NAME}:battery" "bash scripts/battery_monitor.sh 2>&1 | tee $BATTERY_LOG" Enter
+
+# Create a status window for monitoring
+tmux new-window -t "$SESSION_NAME" -n status -c "$PROJECT_DIR"
+tmux send-keys -t "${SESSION_NAME}:status" "watch -n 30 'echo \"=== Training Progress ===\"; tail -5 $TRAIN_LOG; echo; echo \"=== Battery ===\"; cat /sys/class/power_supply/BAT1/capacity 2>/dev/null || echo \"N/A\"; echo \"%\"; cat /sys/class/power_supply/BAT1/status 2>/dev/null || echo \"N/A\"'" Enter
+
+# Select training window
+tmux select-window -t "${SESSION_NAME}:training"
+
+echo ""
+echo "Training started in tmux session: $SESSION_NAME"
+echo ""
+echo "Commands:"
+echo "  Attach to session:  tmux attach -t $SESSION_NAME"
+echo "  Detach from session: Ctrl+b, then d"
+echo "  Switch windows:      Ctrl+b, then n (next) or p (previous)"
+echo "  Kill session:        tmux kill-session -t $SESSION_NAME"
+echo ""
+echo "Windows:"
+echo "  0: training - Training process"
+echo "  1: battery  - Battery monitor (saves checkpoint at <10%)"
+echo "  2: status   - Quick status view"
+echo ""
+echo "You can safely close this terminal. Training will continue."
+echo "=============================================="
