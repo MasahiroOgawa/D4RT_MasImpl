@@ -209,11 +209,12 @@ class D4RTCompositeLoss(nn.Module):
             L3D = torch.zeros(B, N, 1, device=device)
             loss_dict["loss_3d_raw"] = 0.0
 
-        # ========== L2D: L2 loss on 2D coordinates (per-query) ==========
+        # ========== L2D: L1 loss on 2D coordinates (per-query) ==========
+        # Paper: "An L1 loss on 2D coordinates of the point positions in image space"
         if "uv" in predictions and "uv" in targets:
             pred_uv = predictions["uv"]
             gt_uv = targets["uv"]
-            L2D = ((pred_uv - gt_uv) ** 2).sum(dim=-1, keepdim=True)  # [B, N, 1]
+            L2D = torch.abs(pred_uv - gt_uv).sum(dim=-1, keepdim=True)  # [B, N, 1]
             loss_dict["loss_2d_raw"] = L2D.mean().item()
         else:
             L2D = torch.zeros(B, N, 1, device=device)
