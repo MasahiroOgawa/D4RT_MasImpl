@@ -73,6 +73,7 @@ class D4RTCompositeLoss(nn.Module):
             "motion": 0.1,  # λdisp
             "visibility": 0.1,  # λvis
             "confidence": 0.2,  # λconf (penalty weight)
+            "depth_aux": 1.0,  # λdepth_aux (log-depth auxiliary loss for strong Z supervision)
         }
 
         # Merge custom weights with defaults
@@ -88,6 +89,7 @@ class D4RTCompositeLoss(nn.Module):
         self.lambda_disp = self.loss_weights["motion"]
         self.lambda_conf = self.loss_weights["confidence"]
         self.lambda_normal = self.loss_weights["normal"]
+        self.lambda_depth_aux = self.loss_weights["depth_aux"]
 
         # Individual loss functions (used for non-paper mode or components)
         use_paper_3d = loss_weights.get("use_paper_formula_3d", True) if loss_weights else True
@@ -205,9 +207,26 @@ class D4RTCompositeLoss(nn.Module):
                 dim=-1, keepdim=True
             )  # [B, N, 1]
             loss_dict["loss_3d_raw"] = L3D.mean().item()
+
+            # ========== AUXILIARY: Log-depth loss for strong Z supervision ==========
+            # This gives HUGE gradient when pred_z is near 0 or negative, forcing positive depth
+            pred_z = pred_xyz[..., 2:3]  # [B, N, 1]
+            gt_z = gt_xyz[..., 2:3]
+            pred_z_clamped = pred_z.clamp(min=0.1)  # Clamp to handle negative predictions
+            gt_z_clamped = gt_z.clamp(min=0.1)
+            L_depth_aux = torch.abs(torch.log(pred_z_clamped) - torch.log(gt_z_clamped))  # [B, N, 1]
+            loss_dict["loss_depth_aux_raw"] = L_depth_aux.mean().item()
+
+            # Log Z-specific metrics for debugging
+            loss_dict["pred_z_mean"] = pred_z.mean().item()
+            loss_dict["pred_z_std"] = pred_z.std().item()
+            loss_dict["gt_z_mean"] = gt_z.mean().item()
+            loss_dict["pred_z_negative_ratio"] = (pred_z < 0).float().mean().item()
         else:
             L3D = torch.zeros(B, N, 1, device=device)
+            L_depth_aux = torch.zeros(B, N, 1, device=device)
             loss_dict["loss_3d_raw"] = 0.0
+            loss_dict["loss_depth_aux_raw"] = 0.0
 
         # ========== L2D: L1 loss on 2D coordinates (per-query) ==========
         # Paper: "An L1 loss on 2D coordinates of the point positions in image space"
@@ -294,6 +313,7 @@ class D4RTCompositeLoss(nn.Module):
             + self.lambda_vis * Lvis
             + self.lambda_disp * Ldisp
             + self.lambda_normal * Lnormal
+            + self.lambda_depth_aux * L_depth_aux  # Auxiliary log-depth loss
         )
 
         # Per-query total loss
@@ -310,6 +330,7 @@ class D4RTCompositeLoss(nn.Module):
         loss_dict["loss_visibility"] = (self.lambda_vis * Lvis).mean().item()
         loss_dict["loss_motion"] = (self.lambda_disp * Ldisp).mean().item()
         loss_dict["loss_normal"] = (self.lambda_normal * Lnormal).mean().item()
+        loss_dict["loss_depth_aux"] = (self.lambda_depth_aux * L_depth_aux).mean().item()
         loss_dict["loss_total"] = total_loss.item()
         loss_dict["mean_confidence"] = c.mean().item()
 

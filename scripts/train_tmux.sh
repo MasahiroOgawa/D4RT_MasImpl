@@ -1,14 +1,15 @@
 #!/bin/bash
-# Tmux-based training script with battery monitoring
+# Tmux-based training script with battery monitoring and evaluation
 # Usage: ./scripts/train_tmux.sh [config_name] [resume_checkpoint]
 #
 # Features:
 # - Runs training in tmux (survives terminal close / laptop lid close)
 # - Battery monitoring: saves checkpoint and suspends when < 10%
+# - Background evaluation every 10 minutes with Z correlation analysis
 # - Easy to attach/detach: tmux attach -t d4rt
 #
 # Examples:
-#   ./scripts/train_tmux.sh                                    # Default config
+#   ./scripts/train_tmux.sh                                    # Default config (fresh start)
 #   ./scripts/train_tmux.sh train_50k_movi_paper               # Specific config
 #   ./scripts/train_tmux.sh train_50k_movi_paper checkpoint.pth # Resume from checkpoint
 
@@ -20,6 +21,7 @@ CONFIG_NAME="${1:-train_50k_movi_paper}"
 RESUME_CHECKPOINT="${2:-}"
 PROJECT_DIR="/home/mas/proj/study/D4RT_MasImpl"
 LOG_DIR="${PROJECT_DIR}/outputs"
+EVAL_INTERVAL=600  # 10 minutes
 
 # Create log directory
 mkdir -p "$LOG_DIR"
@@ -31,6 +33,12 @@ if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
     sleep 1
 fi
 
+# Clear checkpoints for fresh start (unless resuming)
+if [ -z "$RESUME_CHECKPOINT" ]; then
+    echo "Clearing checkpoints for fresh start..."
+    rm -f "${PROJECT_DIR}/checkpoints/"*.pth "${PROJECT_DIR}/checkpoints/"*.json 2>/dev/null || true
+fi
+
 # Build training command
 TRAIN_CMD="cd $PROJECT_DIR && uv run python scripts/train.py --config-name $CONFIG_NAME --config-path ../configs/training"
 if [ -n "$RESUME_CHECKPOINT" ]; then
@@ -40,6 +48,7 @@ fi
 # Create timestamp for log files
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 TRAIN_LOG="${LOG_DIR}/training_${CONFIG_NAME}_${TIMESTAMP}.log"
+EVAL_LOG="${LOG_DIR}/eval_monitor_${TIMESTAMP}.log"
 BATTERY_LOG="${LOG_DIR}/battery_monitor_${TIMESTAMP}.log"
 
 echo "=============================================="
@@ -49,7 +58,8 @@ echo "Session:    $SESSION_NAME"
 echo "Config:     $CONFIG_NAME"
 echo "Resume:     ${RESUME_CHECKPOINT:-None (fresh start)}"
 echo "Train log:  $TRAIN_LOG"
-echo "Battery log: $BATTERY_LOG"
+echo "Eval log:   $EVAL_LOG"
+echo "Eval interval: $((EVAL_INTERVAL/60)) minutes"
 echo "=============================================="
 
 # Create tmux session with training window
@@ -61,13 +71,17 @@ tmux send-keys -t "${SESSION_NAME}:training" "$TRAIN_CMD 2>&1 | tee $TRAIN_LOG" 
 # Wait a moment for training to start
 sleep 2
 
+# Create evaluation monitor window (background eval every 10 min)
+tmux new-window -t "$SESSION_NAME" -n eval -c "$PROJECT_DIR"
+tmux send-keys -t "${SESSION_NAME}:eval" "sleep 120 && bash scripts/eval_monitor.sh $EVAL_LOG $EVAL_INTERVAL" Enter
+
 # Create battery monitor window
 tmux new-window -t "$SESSION_NAME" -n battery -c "$PROJECT_DIR"
 tmux send-keys -t "${SESSION_NAME}:battery" "bash scripts/battery_monitor.sh 2>&1 | tee $BATTERY_LOG" Enter
 
-# Create a status window for monitoring
+# Create a status window for quick view
 tmux new-window -t "$SESSION_NAME" -n status -c "$PROJECT_DIR"
-tmux send-keys -t "${SESSION_NAME}:status" "watch -n 30 'echo \"=== Training Progress ===\"; tail -5 $TRAIN_LOG; echo; echo \"=== Battery ===\"; cat /sys/class/power_supply/BAT1/capacity 2>/dev/null || echo \"N/A\"; echo \"%\"; cat /sys/class/power_supply/BAT1/status 2>/dev/null || echo \"N/A\"'" Enter
+tmux send-keys -t "${SESSION_NAME}:status" "watch -n 30 'echo \"=== Training ===\"; tail -3 $TRAIN_LOG 2>/dev/null; echo; echo \"=== Latest Eval ===\"; tail -15 $EVAL_LOG 2>/dev/null; echo; echo \"=== Checkpoints ===\"; ls -lt checkpoints/*.pth 2>/dev/null | head -3'" Enter
 
 # Select training window
 tmux select-window -t "${SESSION_NAME}:training"
@@ -83,8 +97,9 @@ echo "  Kill session:        tmux kill-session -t $SESSION_NAME"
 echo ""
 echo "Windows:"
 echo "  0: training - Training process"
-echo "  1: battery  - Battery monitor (saves checkpoint at <10%)"
-echo "  2: status   - Quick status view"
+echo "  1: eval     - Background evaluation (every 10 min)"
+echo "  2: battery  - Battery monitor"
+echo "  3: status   - Quick status view"
 echo ""
 echo "You can safely close this terminal. Training will continue."
 echo "=============================================="

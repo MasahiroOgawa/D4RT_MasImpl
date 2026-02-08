@@ -1,73 +1,100 @@
 #!/bin/bash
-# Monitor training progress and run intermediate evaluation
-#
-# Usage:
-#   ./monitor_training.sh          # Full monitoring with evaluation
-#   ./monitor_training.sh --quick  # Quick status only (no evaluation)
-#   ./monitor_training.sh --eval   # Run evaluation only on latest checkpoint
+# Monitor training every 10 minutes: run quick eval and check Z metrics
+# Usage: ./scripts/monitor_training.sh [log_file]
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+LOG_FILE="${1:-outputs/training_monitor_$(date +%Y%m%d_%H%M%S).log}"
+EVAL_SCENES=5
+INTERVAL=600  # 10 minutes
 
-# Parse arguments
-QUICK_MODE=false
-EVAL_ONLY=false
-for arg in "$@"; do
-    case $arg in
-        --quick|-q) QUICK_MODE=true ;;
-        --eval|-e) EVAL_ONLY=true ;;
-    esac
-done
+echo "========================================" | tee -a "$LOG_FILE"
+echo "Training Monitor Started: $(date)" | tee -a "$LOG_FILE"
+echo "Evaluation interval: $((INTERVAL/60)) minutes" | tee -a "$LOG_FILE"
+echo "Scenes per eval: $EVAL_SCENES" | tee -a "$LOG_FILE"
+echo "Log file: $LOG_FILE" | tee -a "$LOG_FILE"
+echo "========================================" | tee -a "$LOG_FILE"
 
-if [ "$EVAL_ONLY" = true ]; then
-    # Only run evaluation
-    LATEST_CKPT=$(ls -t "$PROJECT_DIR/checkpoints/"checkpoint_step_*.pth 2>/dev/null | head -1)
-    if [ -n "$LATEST_CKPT" ]; then
-        echo "Evaluating: $(basename "$LATEST_CKPT")"
-        cd "$PROJECT_DIR"
-        python scripts/quick_eval.py --checkpoint "$LATEST_CKPT" --num_scenes 20
-    else
-        echo "No checkpoint available for evaluation"
+while true; do
+    # Get current checkpoint step
+    CKPT=$(readlink -f checkpoints/checkpoint_latest.pth 2>/dev/null)
+    if [ -z "$CKPT" ]; then
+        echo "[$(date +%H:%M:%S)] No checkpoint found, waiting..." | tee -a "$LOG_FILE"
+        sleep 60
+        continue
     fi
-    exit 0
-fi
 
-echo "=== Training Status ==="
-ps aux | grep "train.py" | grep -v grep | head -1 || echo "Training not running"
+    STEP=$(basename "$CKPT" | grep -oP '\d+')
 
-echo ""
-echo "=== Current Step ==="
-tail -5 "$PROJECT_DIR/logs/train_fixed_data.log" 2>/dev/null | grep -oP '\d+/50000' | tail -1 || echo "Unknown"
+    echo "" | tee -a "$LOG_FILE"
+    echo "----------------------------------------" | tee -a "$LOG_FILE"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Step $STEP" | tee -a "$LOG_FILE"
+    echo "----------------------------------------" | tee -a "$LOG_FILE"
 
-echo ""
-echo "=== Recent Loss Values ==="
-tail -10 "$PROJECT_DIR/logs/train_fixed_data.log" 2>/dev/null | grep -oP "loss=[\d.]+" | tail -5
+    # Run quick eval with both alignments
+    echo "Running evaluation..." | tee -a "$LOG_FILE"
 
-echo ""
-echo "=== Checkpoints ==="
-ls -la "$PROJECT_DIR/checkpoints/"checkpoint_step_*.pth 2>/dev/null | tail -5 || echo "No checkpoints yet"
+    # Eval with scale_shift alignment
+    EVAL_OUTPUT=$(uv run python scripts/quick_eval.py \
+        --checkpoint checkpoints/checkpoint_latest.pth \
+        --num_scenes $EVAL_SCENES \
+        --alignment scale_shift 2>&1 | tail -20)
 
-echo ""
-echo "=== GPU Usage ==="
-nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader 2>/dev/null || echo "nvidia-smi not available"
+    # Extract metrics
+    AJ=$(echo "$EVAL_OUTPUT" | grep "Average Jaccard" | grep -oP '[\d.]+' | head -1)
+    APD=$(echo "$EVAL_OUTPUT" | grep "Avg Pts Within" | grep -oP '[\d.]+' | head -1)
+    OA=$(echo "$EVAL_OUTPUT" | grep "Occlusion Accuracy" | grep -oP '[\d.]+' | head -1)
+    SCALE_RATIO=$(echo "$EVAL_OUTPUT" | grep "Scale ratio" | grep -oP '[\d.]+' | head -1)
 
-# Skip evaluation in quick mode
-if [ "$QUICK_MODE" = true ]; then
-    echo ""
-    echo "(Quick mode: evaluation skipped. Run with --eval for evaluation)"
-    exit 0
-fi
+    echo "  AJ (scale_shift): $AJ  (target: 0.304)" | tee -a "$LOG_FILE"
+    echo "  APD3D:            $APD  (target: 0.410)" | tee -a "$LOG_FILE"
+    echo "  OA:               $OA  (target: 0.875)" | tee -a "$LOG_FILE"
+    echo "  Scale ratio:      $SCALE_RATIO" | tee -a "$LOG_FILE"
 
-# Run intermediate evaluation on latest checkpoint if available
-echo ""
-echo "=== Intermediate Evaluation ==="
-LATEST_CKPT=$(ls -t "$PROJECT_DIR/checkpoints/"checkpoint_step_*.pth 2>/dev/null | head -1)
+    # Get Z metrics from training log
+    TRAIN_LOG=$(ls -t outputs/training_*.log 2>/dev/null | head -1)
+    if [ -n "$TRAIN_LOG" ]; then
+        # Get recent loss values
+        RECENT_LOSS=$(tail -100 "$TRAIN_LOG" | grep -oP 'loss=[\d.]+' | tail -1)
+        echo "  Recent loss: $RECENT_LOSS" | tee -a "$LOG_FILE"
+    fi
 
-if [ -n "$LATEST_CKPT" ]; then
-    echo "Evaluating: $(basename "$LATEST_CKPT")"
-    cd "$PROJECT_DIR"
-    python scripts/quick_eval.py --checkpoint "$LATEST_CKPT" --num_scenes 10
-else
-    echo "No checkpoint available for evaluation yet"
-    echo "First checkpoint will be saved at step 5000"
-fi
+    # Run Z correlation analysis
+    echo "" | tee -a "$LOG_FILE"
+    echo "Z Correlation Analysis:" | tee -a "$LOG_FILE"
+    Z_ANALYSIS=$(uv run python -c "
+import sys
+sys.path.insert(0, '.')
+import torch
+import numpy as np
+from omegaconf import OmegaConf
+from d4rt.models import build_d4rt_model
+from d4rt.data.datasets.kubric import KubricDataset
+
+model_config = OmegaConf.load('configs/model/vit_b_movi.yaml')
+model = build_d4rt_model(model_config).cuda()
+ckpt = torch.load('checkpoints/checkpoint_latest.pth', map_location='cuda', weights_only=False)
+model.load_state_dict(ckpt['model_state_dict'])
+model.eval()
+
+dataset = KubricDataset('data/kubric', 'val', num_frames=24, resolution=(256, 256), num_queries=64)
+sample = dataset[0]
+
+with torch.no_grad():
+    video = sample['video'].unsqueeze(0).cuda()
+    queries = {k: v.unsqueeze(0).cuda() for k, v in sample['queries'].items()}
+    outputs = model(video, queries)
+
+pred_xyz = outputs['xyz'][0].cpu().numpy()
+gt_xyz = sample['targets']['xyz'].numpy()
+
+for i, axis in enumerate(['X', 'Y', 'Z']):
+    corr = np.corrcoef(pred_xyz[:, i], gt_xyz[:, i])[0, 1]
+    print(f'  {axis}: corr={corr:.3f}, pred_mean={pred_xyz[:, i].mean():.2f}, gt_mean={gt_xyz[:, i].mean():.2f}')
+" 2>&1 | grep -E "^\s+[XYZ]:")
+
+    echo "$Z_ANALYSIS" | tee -a "$LOG_FILE"
+
+    echo "" | tee -a "$LOG_FILE"
+    echo "Next eval in $((INTERVAL/60)) min..." | tee -a "$LOG_FILE"
+
+    sleep $INTERVAL
+done
