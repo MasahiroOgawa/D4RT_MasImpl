@@ -89,6 +89,37 @@ doc/                 # Detailed documentation
 | [Inference Guide](doc/inference.md) | Point tracking, depth, pose estimation |
 | [Implementation Notes](doc/implementation_notes.md) | Differences from paper, fixes, lessons learned |
 
+## Loss Functions
+
+This implementation follows the paper's loss formulation exactly, with one additional auxiliary loss:
+
+### Original Paper Losses (Unchanged)
+
+| Loss | Formula | Weight |
+|------|---------|--------|
+| **3D L1** | `L1(pred_xyz / pred_mean, gt_xyz / gt_mean)` | 1.0 |
+| **2D L2** | `L2(pred_xy, gt_xy)` | 0.1 |
+| **Visibility** | Binary cross-entropy | 0.1 |
+| **Confidence** | Huber penalty for low confidence | 0.2 |
+
+The 3D loss uses scale-invariant normalization: predictions are divided by their mean depth, and ground truth by its mean depth, ensuring the loss is independent of absolute scale.
+
+### Auxiliary Log-Depth Loss (Added)
+
+To help the model learn positive depth values more effectively, we add an auxiliary log-depth loss:
+
+```
+L_depth_aux = |log(clamp(pred_z, min=0.1)) - log(clamp(gt_z, min=0.1))|
+```
+
+| Property | Description |
+|----------|-------------|
+| **Weight** | 1.0 (configurable via `depth_aux` in loss config) |
+| **Scale-invariant** | Depends only on ratio `pred_z / gt_z`, not absolute values |
+| **Strong gradient** | Gives large gradient when pred_z is near zero or negative |
+
+This auxiliary loss complements the paper's loss by providing stronger supervision for depth learning.
+
 ## Model Variants
 
 | Model | Parameters | Config |
