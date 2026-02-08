@@ -104,21 +104,21 @@ This implementation follows the paper's loss formulation exactly, with one addit
 
 The 3D loss uses scale-invariant normalization: predictions are divided by their mean depth, and ground truth by its mean depth, ensuring the loss is independent of absolute scale.
 
-### Auxiliary Log-Depth Loss (Added)
+### Auxiliary Absolute Depth Loss (Added)
 
-To help the model learn positive depth values more effectively, we add an auxiliary log-depth loss:
+To help the model learn correct depth variance, we add an auxiliary absolute L1 depth loss:
 
 ```
-L_depth_aux = |log(clamp(pred_z, min=0.1)) - log(clamp(gt_z, min=0.1))|
+L_depth_aux = |pred_z - gt_z|
 ```
 
 | Property | Description |
 |----------|-------------|
 | **Weight** | 1.0 (configurable via `depth_aux` in loss config) |
-| **Scale-invariant** | Depends only on ratio `pred_z / gt_z`, not absolute values |
-| **Strong gradient** | Gives large gradient when pred_z is near zero or negative |
+| **Not scale-invariant** | Intentionally provides absolute depth supervision |
+| **Prevents variance collapse** | Penalizes when all predictions cluster near mean |
 
-This auxiliary loss complements the paper's loss by providing stronger supervision for depth learning.
+This auxiliary loss complements the paper's scale-invariant loss by encouraging correct depth distribution.
 
 ## Model Variants
 

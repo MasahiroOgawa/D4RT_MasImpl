@@ -208,13 +208,12 @@ class D4RTCompositeLoss(nn.Module):
             )  # [B, N, 1]
             loss_dict["loss_3d_raw"] = L3D.mean().item()
 
-            # ========== AUXILIARY: Log-depth loss for strong Z supervision ==========
-            # This gives HUGE gradient when pred_z is near 0 or negative, forcing positive depth
+            # ========== AUXILIARY: Absolute L1 depth loss ==========
+            # Directly penalizes wrong depth values, encouraging correct variance
+            # Unlike scale-invariant loss, this provides absolute depth supervision
             pred_z = pred_xyz[..., 2:3]  # [B, N, 1]
             gt_z = gt_xyz[..., 2:3]
-            pred_z_clamped = pred_z.clamp(min=0.1)  # Clamp to handle negative predictions
-            gt_z_clamped = gt_z.clamp(min=0.1)
-            L_depth_aux = torch.abs(torch.log(pred_z_clamped) - torch.log(gt_z_clamped))  # [B, N, 1]
+            L_depth_aux = torch.abs(pred_z - gt_z)  # [B, N, 1]
             loss_dict["loss_depth_aux_raw"] = L_depth_aux.mean().item()
 
             # Log Z-specific metrics for debugging
