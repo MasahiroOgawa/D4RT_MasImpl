@@ -109,7 +109,7 @@ print(f'  gt_z:   mean={gt_z_arr.mean():.2f}, std={gt_z_arr.std():.2f}')
 import json
 with open('checkpoints/best_metrics.json') as f:
     m = json.load(f)['all_metrics']
-print(f\"  loss_z_only: {m.get('train/loss_z_only', 'N/A')}\")
+print(f\"  loss_depth_aux: {m.get('train/loss_depth_aux_raw', 'N/A')}\")
 print(f\"  loss_3d_raw: {m.get('train/loss_3d_raw', 'N/A')}\")
 print(f\"  pred_z_negative_ratio: {m.get('train/pred_z_negative_ratio', 'N/A')}\")
 " 2>&1 | tee -a "$LOG_FILE"
