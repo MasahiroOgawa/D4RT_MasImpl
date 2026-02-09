@@ -5,7 +5,7 @@
 # Features:
 # - Runs training in tmux (survives terminal close / laptop lid close)
 # - Battery monitoring: saves checkpoint and suspends when < 10%
-# - Background evaluation every 10 minutes with Z correlation analysis
+# - Background evaluation every 1000 iterations with Z correlation analysis
 # - Easy to attach/detach: tmux attach -t d4rt
 #
 # Examples:
@@ -21,7 +21,7 @@ CONFIG_NAME="${1:-train_50k_movi_paper}"
 RESUME_CHECKPOINT="${2:-}"
 PROJECT_DIR="/home/mas/proj/study/D4RT_MasImpl"
 LOG_DIR="${PROJECT_DIR}/outputs"
-EVAL_INTERVAL=600  # 10 minutes
+EVAL_INTERVAL=1000  # Every 1000 steps
 
 # Create log directory
 mkdir -p "$LOG_DIR"
@@ -59,7 +59,7 @@ echo "Config:     $CONFIG_NAME"
 echo "Resume:     ${RESUME_CHECKPOINT:-None (fresh start)}"
 echo "Train log:  $TRAIN_LOG"
 echo "Eval log:   $EVAL_LOG"
-echo "Eval interval: $((EVAL_INTERVAL/60)) minutes"
+echo "Eval interval: $EVAL_INTERVAL steps"
 echo "=============================================="
 
 # Create tmux session with training window
@@ -71,7 +71,7 @@ tmux send-keys -t "${SESSION_NAME}:training" "$TRAIN_CMD 2>&1 | tee $TRAIN_LOG" 
 # Wait a moment for training to start
 sleep 2
 
-# Create evaluation monitor window (background eval every 10 min)
+# Create evaluation monitor window (background eval every 1000 steps)
 tmux new-window -t "$SESSION_NAME" -n eval -c "$PROJECT_DIR"
 tmux send-keys -t "${SESSION_NAME}:eval" "sleep 120 && bash scripts/eval_monitor.sh $EVAL_LOG $EVAL_INTERVAL" Enter
 
@@ -97,7 +97,7 @@ echo "  Kill session:        tmux kill-session -t $SESSION_NAME"
 echo ""
 echo "Windows:"
 echo "  0: training - Training process"
-echo "  1: eval     - Background evaluation (every 10 min)"
+echo "  1: eval     - Background evaluation (every 1000 steps)"
 echo "  2: battery  - Battery monitor"
 echo "  3: status   - Quick status view"
 echo ""

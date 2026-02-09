@@ -17,7 +17,6 @@ training:
   val_every_n_steps: 1000
   save_every_n_steps: 1000
   num_queries_per_step: 64
-  z_gradient_scale: 1.0
   loss_weights:
     l1_3d: 1.0
     l2_2d: 0.1
@@ -25,7 +24,6 @@ training:
     motion: 0.1
     visibility: 0.1
     confidence: 0.2
-    depth_aux: 1.0
     use_paper_formula_3d: true
 
 optimizer:

@@ -1,17 +1,18 @@
 #!/bin/bash
-# Background evaluation monitor - runs quick eval every N seconds
-# Usage: ./scripts/eval_monitor.sh [log_file] [interval_seconds]
+# Background evaluation monitor - runs quick eval every N iterations
+# Usage: ./scripts/eval_monitor.sh [log_file] [step_interval]
 
 LOG_FILE="${1:-outputs/eval_monitor.log}"
-INTERVAL="${2:-600}"  # Default 10 minutes
+STEP_INTERVAL="${2:-1000}"  # Default every 1000 steps
 EVAL_SCENES=5
 PROJECT_DIR="/home/mas/proj/study/D4RT_MasImpl"
+LAST_EVAL_STEP=0
 
 cd "$PROJECT_DIR"
 
 echo "========================================" | tee "$LOG_FILE"
 echo "Evaluation Monitor Started: $(date)" | tee -a "$LOG_FILE"
-echo "Interval: $((INTERVAL/60)) minutes" | tee -a "$LOG_FILE"
+echo "Step interval: $STEP_INTERVAL" | tee -a "$LOG_FILE"
 echo "Scenes: $EVAL_SCENES" | tee -a "$LOG_FILE"
 echo "========================================" | tee -a "$LOG_FILE"
 
@@ -19,20 +20,27 @@ while true; do
     # Check for checkpoint
     if [ ! -f "checkpoints/checkpoint_latest.pth" ]; then
         echo "[$(date '+%H:%M:%S')] Waiting for checkpoint..." | tee -a "$LOG_FILE"
-        sleep 60
+        sleep 30
         continue
     fi
 
-    # Get step from checkpoint filename
+    # Get step from checkpoint filename (remove leading zeros to avoid octal interpretation)
     CKPT_FILE=$(readlink -f checkpoints/checkpoint_latest.pth)
-    STEP=$(basename "$CKPT_FILE" | grep -oP '\d+' || echo "unknown")
+    STEP_RAW=$(basename "$CKPT_FILE" | grep -oP '\d+' || echo "0")
+    STEP=$((10#$STEP_RAW))  # Force base-10 interpretation
+
+    # Check if we should evaluate (new step >= last + interval)
+    if [ "$STEP" -lt "$((LAST_EVAL_STEP + STEP_INTERVAL))" ]; then
+        sleep 30  # Check every 30 seconds
+        continue
+    fi
 
     echo "" | tee -a "$LOG_FILE"
     echo "========================================" | tee -a "$LOG_FILE"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Step $STEP" | tee -a "$LOG_FILE"
     echo "========================================" | tee -a "$LOG_FILE"
 
-    # Run quick eval (in background to not block)
+    # Run quick eval
     EVAL_OUTPUT=$(uv run python scripts/quick_eval.py \
         --checkpoint checkpoints/checkpoint_latest.pth \
         --num_scenes $EVAL_SCENES \
@@ -101,7 +109,7 @@ print(f'  pred_z: mean={pred_z_arr.mean():.2f}, std={pred_z_arr.std():.2f}, nega
 print(f'  gt_z:   mean={gt_z_arr.mean():.2f}, std={gt_z_arr.std():.2f}')
 " 2>&1 | grep -E "^\s+[XYZ]:|pred_z:|gt_z:" | tee -a "$LOG_FILE"
 
-    # Check best_metrics.json for Z loss
+    # Check best_metrics.json for loss values
     if [ -f "checkpoints/best_metrics.json" ]; then
         echo "" | tee -a "$LOG_FILE"
         echo "Loss metrics:" | tee -a "$LOG_FILE"
@@ -109,14 +117,15 @@ print(f'  gt_z:   mean={gt_z_arr.mean():.2f}, std={gt_z_arr.std():.2f}')
 import json
 with open('checkpoints/best_metrics.json') as f:
     m = json.load(f)['all_metrics']
-print(f\"  loss_depth_aux: {m.get('train/loss_depth_aux_raw', 'N/A')}\")
+print(f\"  loss_depth: {m.get('train/loss_depth', m.get('train/loss_depth_raw', 'N/A'))}\")
 print(f\"  loss_3d_raw: {m.get('train/loss_3d_raw', 'N/A')}\")
 print(f\"  pred_z_negative_ratio: {m.get('train/pred_z_negative_ratio', 'N/A')}\")
 " 2>&1 | tee -a "$LOG_FILE"
     fi
 
-    echo "" | tee -a "$LOG_FILE"
-    echo "Next eval in $((INTERVAL/60)) min..." | tee -a "$LOG_FILE"
+    # Update last evaluated step
+    LAST_EVAL_STEP=$STEP
 
-    sleep $INTERVAL
+    echo "" | tee -a "$LOG_FILE"
+    echo "Next eval at step $((LAST_EVAL_STEP + STEP_INTERVAL))..." | tee -a "$LOG_FILE"
 done

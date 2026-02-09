@@ -22,10 +22,6 @@ training:
   val_every_n_steps: 1000
   save_every_n_steps: 5000
   num_queries_per_step: 128
-  # Z gradient scaling to help overcome depth variance collapse
-  # Encoder features contain depth info (linear probe corr=0.44) but model only achieves 0.1-0.3
-  # Scaling Z gradients helps the model learn to use this information
-  z_gradient_scale: 5.0  # Scale Z gradients by 5x (try 3-10)
   # Paper loss weights (from Phase 13.5)
   loss_weights:
     l1_3d: 1.0
@@ -34,7 +30,7 @@ training:
     motion: 0.1
     visibility: 0.1
     confidence: 0.2
-    depth_aux: 1.0  # Auxiliary absolute L1 depth loss
+    depth: 10.0  # Direct L1 depth loss (high weight to enforce correct depth)
     use_paper_formula_3d: true  # Mean depth normalization + signed-log transform
 
 optimizer:
