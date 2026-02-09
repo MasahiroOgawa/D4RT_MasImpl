@@ -6,20 +6,26 @@ Command-line usage for all scripts in the D4RT implementation.
 
 ```
 scripts/
-├── train.py              # Main training script
-├── evaluate.py           # Evaluation script
-├── quick_eval.py         # Quick TAPVid-3D evaluation
-├── infer_tracking.py     # Point tracking inference
-├── infer_depth.py        # Depth reconstruction
-├── infer_pose.py         # Camera pose estimation
-├── show_model_info.py    # Model architecture info
-├── download_movi.py      # Download MOVi dataset
-├── prepare_kubric_data.py # Prepare Kubric data
-├── train_tmux.sh         # Tmux-based training with monitoring
-├── eval_monitor.sh       # Background evaluation monitor
-├── battery_monitor.sh    # Battery-aware training
-├── debug/                # Debug scripts
-└── test/                 # Test scripts
+├── train.py                    # Main training script
+├── train_tmux.sh               # Tmux-based training with monitoring
+├── eval_monitor.sh             # Background evaluation monitor
+├── battery_monitor.sh          # Battery-aware training
+├── evaluate.py                 # Generic evaluation
+├── quick_eval.py               # Quick TAPVid-3D evaluation
+├── evaluate_tapvid.py          # Official TAPVid-3D benchmark
+├── evaluate_movi_tracks.py     # MOVi tracks evaluation
+├── infer_tracking.py           # Point tracking inference
+├── infer_depth.py              # Depth reconstruction
+├── infer_pose.py               # Camera pose estimation
+├── download_movi.py            # Download MOVi dataset
+├── convert_movi_to_kubric.py   # Convert MOVi to Kubric format
+├── add_tracks_to_movi.py       # Add point tracks to MOVi data
+├── prepare_kubric_data.py      # Prepare Kubric data
+├── show_model_info.py          # Model architecture info
+├── visualize_predictions.py    # Visualize predictions vs GT
+├── visualize_tracking_video.py # Create tracking visualization video
+├── debug/                      # Debug scripts (19 files)
+└── test/                       # Test scripts (5 files)
 ```
 
 ## Training
@@ -33,15 +39,17 @@ Train D4RT models with Hydra configuration.
 uv run python scripts/train.py --config-name train_50k_movi_paper --config-path ../configs/training
 
 # Resume from checkpoint
-uv run python scripts/train.py --config-name train_50k_movi_paper --config-path ../configs/training +training.resume_from=checkpoints/checkpoint_step_0005000.pth
+uv run python scripts/train.py --config-name train_50k_movi_paper --config-path ../configs/training \
+    +training.resume_from=checkpoints/checkpoint_step_0005000.pth
 
 # Override parameters
-uv run python scripts/train.py --config-name train_50k_movi_paper --config-path ../configs/training training.batch_size=2 optimizer.lr=5e-5
+uv run python scripts/train.py --config-name train_50k_movi_paper --config-path ../configs/training \
+    training.batch_size=2 optimizer.lr=5e-5
 ```
 
 ### `train_tmux.sh` - Tmux Training Wrapper
 
-Run training in tmux with automatic monitoring.
+Run training in tmux with automatic monitoring (recommended).
 
 ```bash
 # Start training (fresh)
@@ -78,25 +86,25 @@ Runs evaluation every N training iterations.
 ./scripts/eval_monitor.sh outputs/eval.log 500
 ```
 
-## Evaluation
+### `battery_monitor.sh` - Battery Monitor
 
-### `evaluate.py` - Comprehensive Evaluation
+Monitors battery and saves checkpoint when low.
 
 ```bash
-# Evaluate on Kubric
+./scripts/battery_monitor.sh
+```
+
+## Evaluation
+
+### `evaluate.py` - Generic Evaluation
+
+```bash
 uv run python scripts/evaluate.py \
     --checkpoint checkpoints/checkpoint_latest.pth \
     --dataset kubric \
     --data-dir data/kubric \
     --split val \
     --output results.json
-
-# Specific tasks
-uv run python scripts/evaluate.py \
-    --checkpoint checkpoints/model.pth \
-    --dataset kubric \
-    --tasks tracking depth \
-    --max-samples 100
 ```
 
 ### `quick_eval.py` - Quick TAPVid-3D Evaluation
@@ -104,7 +112,6 @@ uv run python scripts/evaluate.py \
 Fast evaluation using TAPVid-3D metrics.
 
 ```bash
-# Quick eval on 5 scenes
 uv run python scripts/quick_eval.py \
     --checkpoint checkpoints/checkpoint_latest.pth \
     --num_scenes 5 \
@@ -115,6 +122,28 @@ uv run python scripts/quick_eval.py \
 - **AJ (Average Jaccard)**: Target 0.304
 - **APD3D (Average Position Distance 3D)**: Target 0.410
 - **OA (Occlusion Accuracy)**: Target 0.875
+
+### `evaluate_tapvid.py` - Official TAPVid-3D Benchmark
+
+```bash
+uv run python scripts/evaluate_tapvid.py \
+    --checkpoint checkpoints/checkpoint_step_0050000.pth \
+    --model-config configs/model/vit_b_movi.yaml \
+    --dataset-dir data/tapvid3d \
+    --split val
+```
+
+### `evaluate_movi_tracks.py` - MOVi Tracks Evaluation
+
+```bash
+uv run python scripts/evaluate_movi_tracks.py \
+    --checkpoint checkpoints/checkpoint_step_0050000.pth \
+    --model-config configs/model/vit_b_movi.yaml \
+    --data-dir data/kubric \
+    --split val \
+    --max-samples 20 \
+    --output results/movi_eval.json
+```
 
 ## Inference
 
@@ -177,6 +206,28 @@ uv run python scripts/download_movi.py --variant a --output data/movi
 uv run python scripts/download_movi.py --variant e --output data/movi
 ```
 
+### `convert_movi_to_kubric.py` - Convert MOVi to Kubric Format
+
+```bash
+uv run python scripts/convert_movi_to_kubric.py \
+    --dataset movi_a \
+    --split train \
+    --num-samples 100 \
+    --output-dir data/kubric
+```
+
+### `add_tracks_to_movi.py` - Add Point Tracks
+
+Add TAP-Vid compatible point tracks to MOVi data.
+
+```bash
+uv run python scripts/add_tracks_to_movi.py \
+    --data-dir data/kubric \
+    --split val \
+    --num-samples 5 \
+    --num-points 256
+```
+
 ### `prepare_kubric_data.py` - Prepare Kubric Data
 
 ```bash
@@ -184,6 +235,28 @@ uv run python scripts/prepare_kubric_data.py \
     --input data/movi \
     --output data/kubric \
     --split train
+```
+
+## Visualization
+
+### `visualize_predictions.py` - Visualize Predictions vs GT
+
+```bash
+uv run python scripts/visualize_predictions.py \
+    --checkpoint checkpoints/checkpoint_step_0050000.pth \
+    --model-config configs/model/vit_b_movi.yaml \
+    --data-dir data/kubric \
+    --scene-idx 0
+```
+
+### `visualize_tracking_video.py` - Create Tracking Video
+
+```bash
+uv run python scripts/visualize_tracking_video.py \
+    --checkpoint checkpoints/model.pth \
+    --data-dir data/kubric \
+    --scene-idx 0 \
+    --output tracking_video.mp4
 ```
 
 ## Utilities
@@ -203,7 +276,7 @@ uv run python scripts/show_model_info.py --compare --memory
 
 ## Debug Scripts (`scripts/debug/`)
 
-Development and debugging utilities:
+Development and debugging utilities (19 files):
 
 | Script | Purpose |
 |--------|---------|
@@ -213,10 +286,15 @@ Development and debugging utilities:
 | `debug_tracking.py` | Debug tracking predictions |
 | `debug_attention_stats.py` | Analyze attention patterns |
 | `debug_training_diagnostics.py` | Training diagnostics |
+| `debug_analyze_confidence_gradient.py` | Confidence gradient analysis |
+| `debug_check_confidence_exploit.py` | Check confidence exploitation |
+| `debug_check_learning.py` | Check if model is learning |
+| `debug_investigate_loss.py` | Investigate loss components |
+| `analyze_tracking_errors.py` | Visualize tracking errors |
 
 ## Test Scripts (`scripts/test/`)
 
-Validation and testing:
+Validation and testing (5 files):
 
 | Script | Purpose |
 |--------|---------|
@@ -224,6 +302,7 @@ Validation and testing:
 | `test_data.py` | Data pipeline tests |
 | `test_training.py` | Training loop tests |
 | `test_gradient_fixes.py` | Gradient flow validation |
+| `test_combined_fix.py` | Combined fix validation |
 
 Run tests:
 ```bash
