@@ -47,6 +47,7 @@ class D4RTCompositeLoss(nn.Module):
         loss_weights: Optional[Dict[str, float]] = None,
         use_paper_formula: bool = True,
         confidence_warmup_steps: int = 0,
+        z_gradient_scale: float = 1.0,
     ):
         """
         Initialize paper-exact composite loss.
@@ -59,10 +60,14 @@ class D4RTCompositeLoss(nn.Module):
                 without learning proper 3D predictions. After warmup, the learned
                 confidence is used. Set to 0 to disable warmup (original paper behavior).
                 Recommended: 10000-25000 steps.
+            z_gradient_scale: Scale factor for Z (depth) gradients. Higher values give
+                stronger gradients for depth prediction, helping overcome variance collapse.
+                Default 1.0. Recommended: 3.0-10.0 if depth variance is collapsing.
         """
         super().__init__()
         self.use_paper_formula = use_paper_formula
         self.confidence_warmup_steps = confidence_warmup_steps
+        self.z_gradient_scale = z_gradient_scale
         self._current_step = 0
 
         # Default weights from paper
@@ -202,11 +207,21 @@ class D4RTCompositeLoss(nn.Module):
             pred_transformed = torch.sign(pred_norm) * torch.log(1 + torch.abs(pred_norm))
             gt_transformed = torch.sign(gt_norm) * torch.log(1 + torch.abs(gt_norm))
 
-            # Per-query L1 loss (sum over xyz dimensions)
-            L3D = torch.abs(pred_transformed - gt_transformed).sum(
-                dim=-1, keepdim=True
-            )  # [B, N, 1]
+            # Per-query L1 loss with Z gradient scaling
+            # Compute L1 for each axis separately to allow Z scaling
+            L3D_per_axis = torch.abs(pred_transformed - gt_transformed)  # [B, N, 3]
+
+            # Scale Z (depth) gradients to help overcome variance collapse
+            if self.z_gradient_scale != 1.0:
+                # Scale Z component (index 2) by z_gradient_scale
+                scale_factors = torch.tensor(
+                    [1.0, 1.0, self.z_gradient_scale], device=L3D_per_axis.device
+                )
+                L3D_per_axis = L3D_per_axis * scale_factors
+
+            L3D = L3D_per_axis.sum(dim=-1, keepdim=True)  # [B, N, 1]
             loss_dict["loss_3d_raw"] = L3D.mean().item()
+            loss_dict["z_gradient_scale"] = self.z_gradient_scale
 
             # ========== AUXILIARY: Absolute L1 depth loss ==========
             # Directly penalizes wrong depth values, encouraging correct variance
@@ -448,8 +463,10 @@ def build_composite_loss(config: Dict) -> D4RTCompositeLoss:
     loss_weights = config.get("loss_weights", {})
     use_paper_formula = config.get("use_paper_formula", True)
     confidence_warmup_steps = config.get("confidence_warmup_steps", 0)
+    z_gradient_scale = config.get("z_gradient_scale", 1.0)
     return D4RTCompositeLoss(
         loss_weights=loss_weights,
         use_paper_formula=use_paper_formula,
         confidence_warmup_steps=confidence_warmup_steps,
+        z_gradient_scale=z_gradient_scale,
     )

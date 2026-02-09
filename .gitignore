@@ -90,3 +90,4 @@ visualization/
 *.avi
 *.gif
 test_checkpoints/
+checkpoints_backup_phase14_4_failed/
