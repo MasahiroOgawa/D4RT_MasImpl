@@ -74,6 +74,10 @@ class D4RTCompositeLoss(nn.Module):
             "visibility": 0.1,  # λvis
             "confidence": 0.2,  # λconf (penalty weight)
             "depth": 0.0,  # λdepth (direct L1 depth loss, 0 = disabled)
+            # Normalization mode for 3D loss:
+            # "paper": independent normalization (pred by pred_z_mean, gt by gt_z_mean) + log transform
+            # "dust3r": joint normalization (both by combined 3D distance), no log transform
+            "norm_mode": "dust3r",
         }
 
         # Merge custom weights with defaults
@@ -90,6 +94,7 @@ class D4RTCompositeLoss(nn.Module):
         self.lambda_conf = self.loss_weights["confidence"]
         self.lambda_normal = self.loss_weights["normal"]
         self.lambda_depth = self.loss_weights["depth"]
+        self.norm_mode = self.loss_weights.get("norm_mode", "dust3r")
 
         # Individual loss functions (used for non-paper mode or components)
         use_paper_3d = loss_weights.get("use_paper_formula_3d", True) if loss_weights else True
@@ -191,21 +196,44 @@ class D4RTCompositeLoss(nn.Module):
             pred_xyz = predictions["xyz"]
             gt_xyz = targets["xyz"]
 
-            # Paper's normalization: each normalized by its OWN mean depth
-            # "both the target and the estimated point sets are normalized by their respective mean depths"
-            pred_mean_depth = pred_xyz[..., 2:3].mean(dim=1, keepdim=True)  # [B, 1, 1]
-            gt_mean_depth = gt_xyz[..., 2:3].mean(dim=1, keepdim=True)  # [B, 1, 1]
-            pred_norm = pred_xyz / (pred_mean_depth + 1e-8)
-            gt_norm = gt_xyz / (gt_mean_depth + 1e-8)
+            if self.norm_mode == "dust3r":
+                # DUSt3R-style: Joint normalization by combined 3D Euclidean distance
+                # Key insight: Use SAME scale factor for both pred and gt
+                # This preserves relative depth information while being scale-robust
 
-            # Apply signed log transform
-            pred_transformed = torch.sign(pred_norm) * torch.log(1 + torch.abs(pred_norm))
-            gt_transformed = torch.sign(gt_norm) * torch.log(1 + torch.abs(gt_norm))
+                # Compute 3D Euclidean distance from origin for each point
+                pred_dist = pred_xyz.norm(dim=-1, keepdim=True)  # [B, N, 1]
+                gt_dist = gt_xyz.norm(dim=-1, keepdim=True)  # [B, N, 1]
 
-            # Per-query L1 loss
-            L3D = torch.abs(pred_transformed - gt_transformed).sum(
-                dim=-1, keepdim=True
-            )  # [B, N, 1]
+                # Combine and compute mean distance (single scale factor per batch)
+                combined_dist = torch.cat([pred_dist, gt_dist], dim=1)  # [B, 2N, 1]
+                scale_factor = combined_dist.mean(dim=1, keepdim=True)  # [B, 1, 1]
+
+                # Normalize both by SAME scale factor
+                pred_norm = pred_xyz / (scale_factor + 1e-8)
+                gt_norm = gt_xyz / (scale_factor + 1e-8)
+
+                # Direct L1 loss without log compression (DUSt3R uses L2, we keep L1)
+                L3D = torch.abs(pred_norm - gt_norm).sum(dim=-1, keepdim=True)  # [B, N, 1]
+
+                loss_dict["norm_scale_factor"] = scale_factor.mean().item()
+            else:
+                # Paper's normalization: each normalized by its OWN mean depth
+                # "both the target and the estimated point sets are normalized by their respective mean depths"
+                pred_mean_depth = pred_xyz[..., 2:3].mean(dim=1, keepdim=True)  # [B, 1, 1]
+                gt_mean_depth = gt_xyz[..., 2:3].mean(dim=1, keepdim=True)  # [B, 1, 1]
+                pred_norm = pred_xyz / (pred_mean_depth + 1e-8)
+                gt_norm = gt_xyz / (gt_mean_depth + 1e-8)
+
+                # Apply signed log transform
+                pred_transformed = torch.sign(pred_norm) * torch.log(1 + torch.abs(pred_norm))
+                gt_transformed = torch.sign(gt_norm) * torch.log(1 + torch.abs(gt_norm))
+
+                # Per-query L1 loss
+                L3D = torch.abs(pred_transformed - gt_transformed).sum(
+                    dim=-1, keepdim=True
+                )  # [B, N, 1]
+
             loss_dict["loss_3d_raw"] = L3D.mean().item()
 
             # Direct L1 depth loss (not scale-invariant)

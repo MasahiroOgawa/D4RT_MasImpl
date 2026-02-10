@@ -22,7 +22,7 @@ training:
   val_every_n_steps: 1000
   save_every_n_steps: 5000
   num_queries_per_step: 128
-  # Paper loss weights (from Phase 13.5)
+  # Loss weights
   loss_weights:
     l1_3d: 1.0
     l2_2d: 0.1
@@ -30,8 +30,11 @@ training:
     motion: 0.1
     visibility: 0.1
     confidence: 0.2
-    depth: 10.0  # Direct L1 depth loss (high weight to enforce correct depth)
-    use_paper_formula_3d: true  # Mean depth normalization + signed-log transform
+    depth: 0.0  # Direct L1 depth loss (disabled, relying on norm_mode fix)
+    # Normalization mode for 3D loss:
+    # "paper": independent normalization (pred by pred_z_mean, gt by gt_z_mean) + log transform
+    # "dust3r": joint normalization (both by combined 3D distance), no log transform
+    norm_mode: dust3r
 
 optimizer:
   type: adamw
