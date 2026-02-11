@@ -91,34 +91,44 @@ doc/                 # Detailed documentation
 
 ## Loss Functions
 
-This implementation follows the paper's loss formulation exactly, with one additional auxiliary loss:
+This implementation combines the paper's loss formulation with practical improvements for depth learning.
 
-### Original Paper Losses (Unchanged)
+### Loss Weights
 
-| Loss | Formula | Weight |
-|------|---------|--------|
-| **3D L1** | `L1(pred_xyz / pred_mean, gt_xyz / gt_mean)` | 1.0 |
-| **2D L2** | `L2(pred_xy, gt_xy)` | 0.1 |
-| **Visibility** | Binary cross-entropy | 0.1 |
-| **Confidence** | Huber penalty for low confidence | 0.2 |
+| Loss | Weight | Description |
+|------|--------|-------------|
+| **3D L1** | 1.0 | Primary 3D position loss (DUSt3R-style normalization) |
+| **2D L1** | 0.1 | Image-space coordinate loss |
+| **Visibility** | 0.1 | Binary cross-entropy for occlusion |
+| **Confidence** | 0.2 | Penalty term `-log(c)` for honest confidence |
+| **Normal** | 0.5 | Surface normal cosine loss |
+| **Motion** | 0.1 | Temporal motion consistency |
+| **Depth** | 1.0 | Direct L1 depth loss (see below) |
 
-The 3D loss uses scale-invariant normalization: predictions are divided by their mean depth, and ground truth by its mean depth, ensuring the loss is independent of absolute scale.
+### 3D Loss Normalization
 
-### Auxiliary Absolute Depth Loss (Added)
+Two normalization modes are available (configurable via `norm_mode`):
 
-To help the model learn correct depth variance, we add an auxiliary absolute L1 depth loss:
+| Mode | Formula | Description |
+|------|---------|-------------|
+| `dust3r` (default) | Joint normalization by combined 3D distance | Both pred and GT normalized by same scale factor |
+| `paper` | `pred / pred_mean`, `gt / gt_mean` + log transform | Paper's scale-invariant formulation |
+
+### Direct Depth Loss (Key Addition)
+
+To prevent **depth variance collapse** (model predicting near-constant depth), we add a direct L1 depth loss:
 
 ```
-L_depth_aux = |pred_z - gt_z|
+L_depth = λ_depth * |pred_z - gt_z|
 ```
 
 | Property | Description |
 |----------|-------------|
-| **Weight** | 1.0 (configurable via `depth_aux` in loss config) |
-| **Not scale-invariant** | Intentionally provides absolute depth supervision |
-| **Prevents variance collapse** | Penalizes when all predictions cluster near mean |
+| **Weight** | 1.0 (configurable via `depth` in loss config) |
+| **Not scale-invariant** | Provides absolute depth supervision |
+| **Prevents variance collapse** | Penalizes when predictions cluster near mean |
 
-This auxiliary loss complements the paper's scale-invariant loss by encouraging correct depth distribution.
+This is critical because scale-invariant losses alone allow the model to minimize loss by predicting all depths near the mean value.
 
 ## Model Variants
 

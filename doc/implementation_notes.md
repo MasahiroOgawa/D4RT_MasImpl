@@ -6,9 +6,10 @@ This document describes the differences between our implementation and the origi
 
 1. [Loss Function](#loss-function)
 2. [Confidence Warmup](#confidence-warmup)
-3. [UV Coordinate Normalization](#uv-coordinate-normalization)
-4. [Gradient Clipping](#gradient-clipping)
-5. [Architecture Notes](#architecture-notes)
+3. [Depth Variance Collapse](#depth-variance-collapse)
+4. [UV Coordinate Normalization](#uv-coordinate-normalization)
+5. [Gradient Clipping](#gradient-clipping)
+6. [Architecture Notes](#architecture-notes)
 
 ---
 
@@ -106,6 +107,48 @@ The plots show:
 1. **Left**: Higher L3D error → lower optimal confidence
 2. **Middle**: XYZ gradient multiplier drops to near-zero for high L3D
 3. **Right**: Loss minimum at very low confidence
+
+---
+
+## Depth Variance Collapse
+
+### Problem
+
+Scale-invariant 3D losses (both paper's independent normalization and DUSt3R's joint normalization) allow the model to minimize loss by predicting all depths near the mean value. This is because after normalization, predictions clustered around the mean have small errors.
+
+**Observed symptoms** (training with `depth: 0.0`):
+- `pred_z_std = 0.78` vs `gt_z_std = 2.62` (30% of expected variance)
+- Z correlation = 0.39 (low depth accuracy)
+- Good XY tracking (corr > 0.5) but poor depth
+
+### Solution: Direct Depth Loss
+
+Add an absolute L1 depth loss that is NOT scale-invariant:
+
+```python
+L_depth = |pred_z - gt_z|
+```
+
+**Configuration:**
+```yaml
+loss_weights:
+  depth: 1.0  # Direct L1 depth loss weight
+```
+
+**Results after enabling depth loss:**
+
+| Step | Z corr | pred_z std | gt_z std |
+|------|--------|------------|----------|
+| 19000 (depth=0) | 0.359 | 0.74 | 3.15 |
+| 20000 (depth=1) | 0.409 | 0.92 | 3.12 |
+
+Z correlation and variance improved after just 1k steps with depth loss enabled.
+
+### Why This Works
+
+The direct depth loss provides a gradient signal proportional to the absolute depth error, regardless of scale normalization. This encourages the model to:
+1. Predict the correct depth distribution (matching GT variance)
+2. Learn absolute depth values, not just relative ordering
 
 ---
 

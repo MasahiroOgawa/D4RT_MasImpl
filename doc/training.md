@@ -42,32 +42,37 @@ The total loss combines multiple supervision signals:
 
 | Loss | Weight | Description |
 |------|--------|-------------|
-| **L1 3D** | 1.0 | Primary 3D loss (normalized by mean depth, signed-log transform) |
-| **L2 2D** | 0.1 | Reprojection error in image space |
+| **L1 3D** | 1.0 | Primary 3D loss (DUSt3R-style joint normalization) |
+| **L1 2D** | 0.1 | Image-space coordinate loss |
 | **Normal** | 0.5 | Cosine similarity of surface normals |
 | **Motion** | 0.1 | Temporal consistency of motion |
 | **Visibility** | 0.1 | Binary cross-entropy for occlusion prediction |
 | **Confidence** | 0.2 | Penalty term `-log(c)` to encourage honest confidence |
-| **Depth** | 10.0 | Direct L1 depth loss `|pred_z - gt_z|` |
+| **Depth** | 1.0 | Direct L1 depth loss `|pred_z - gt_z|` |
 
-### 3D Loss Normalization (Paper Formula)
+### 3D Loss Normalization Modes
 
-The paper's 3D loss uses scale-invariant normalization:
+The `norm_mode` config option controls how 3D positions are normalized before computing loss:
 
-1. **Mean depth normalization**: Divide positions by the mean ground truth depth
-2. **Signed-log transform**: `sign(x) * log(1 + |x|)` to dampen influence of far points
+| Mode | Description |
+|------|-------------|
+| `dust3r` (default) | **Joint normalization**: Both pred and GT divided by combined mean 3D distance. No log transform. More stable for depth learning. |
+| `paper` | **Independent normalization**: pred divided by pred_mean_depth, GT by GT_mean_depth, then signed-log transform. Fully scale-invariant but can cause variance collapse. |
 
-This makes the loss scale-invariant and prevents distant points from dominating.
+### Direct Depth Loss (Critical for Depth Learning)
 
-### Direct Depth Loss
-
-To address depth variance collapse (where the model predicts all depths near the mean), a direct L1 depth loss is added:
+Scale-invariant losses allow the model to minimize loss by predicting all depths near the mean value (variance collapse). To address this, we add a direct L1 depth loss:
 
 ```
 L_depth = λ_depth * |pred_z - gt_z|
 ```
 
-With `λ_depth = 10.0`, this strongly penalizes absolute depth errors and encourages the model to learn the full depth distribution.
+With `λ_depth = 1.0`, this provides absolute depth supervision and encourages the model to learn the full depth distribution.
+
+**Symptoms of variance collapse** (when depth loss is disabled):
+- `pred_z_std` << `gt_z_std` (e.g., 0.78 vs 2.62)
+- Low Z correlation (< 0.4)
+- Good XY tracking but poor depth
 
 ## Training Configuration
 
