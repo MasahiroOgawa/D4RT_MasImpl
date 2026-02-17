@@ -34,7 +34,7 @@ training:
     # Normalization mode for 3D loss:
     # "paper": independent normalization (pred by pred_z_mean, gt by gt_z_mean) + log transform
     # "dust3r": joint normalization (both by combined 3D distance), no log transform
-    norm_mode: dust3r
+    norm_mode: paper
 
 optimizer:
   type: adamw

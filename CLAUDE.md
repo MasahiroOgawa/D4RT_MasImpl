@@ -61,7 +61,7 @@ Video [B, T=24, 3, 256, 256]
 
 | Loss | Weight | Notes |
 |------|--------|-------|
-| 3D L1 | 1.0 | DUSt3R-style joint normalization |
+| 3D L1 | 1.0 | Paper's independent Z-mean normalization + signed log |
 | 2D L1 | 0.1 | Image-space coordinates |
 | Visibility | 0.1 | BCE for occlusion |
 | Confidence | 0.2 | `-log(c)` penalty |

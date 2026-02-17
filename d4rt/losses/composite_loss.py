@@ -16,17 +16,18 @@ Default weights from paper:
 - λnormal = 0.5
 """
 
+from typing import Dict, Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Optional
 
 from .l1_3d import L1_3DLoss
-from .projection_2d import Projection2DLoss
-from .visibility import VisibilityLoss
-from .normal import NormalLoss
 from .motion import MotionLoss
+from .normal import NormalLoss
+from .projection_2d import Projection2DLoss
 from .uv_loss import UVLoss
+from .visibility import VisibilityLoss
 
 
 class D4RTCompositeLoss(nn.Module):
@@ -77,7 +78,7 @@ class D4RTCompositeLoss(nn.Module):
             # Normalization mode for 3D loss:
             # "paper": independent normalization (pred by pred_z_mean, gt by gt_z_mean) + log transform
             # "dust3r": joint normalization (both by combined 3D distance), no log transform
-            "norm_mode": "dust3r",
+            "norm_mode": "paper",  # Default to paper's original formulation
         }
 
         # Merge custom weights with defaults
@@ -94,7 +95,7 @@ class D4RTCompositeLoss(nn.Module):
         self.lambda_conf = self.loss_weights["confidence"]
         self.lambda_normal = self.loss_weights["normal"]
         self.lambda_depth = self.loss_weights["depth"]
-        self.norm_mode = self.loss_weights.get("norm_mode", "dust3r")
+        self.norm_mode = self.loss_weights.get("norm_mode", "paper")
 
         # Individual loss functions (used for non-paper mode or components)
         use_paper_3d = loss_weights.get("use_paper_formula_3d", True) if loss_weights else True
