@@ -281,7 +281,12 @@ class CrossAttentionDecoder(nn.Module):
 
 
 class DecoderLayer(nn.Module):
-    """Single decoder layer with self-attention, cross-attention, and FFN."""
+    """Single decoder layer with cross-attention and FFN (NO self-attention per paper).
+
+    The D4RT paper specifies that "queries do not interact" - they should only
+    cross-attend to encoder features. Self-attention would allow queries to
+    mix information, potentially diluting depth-specific features.
+    """
 
     def __init__(
         self,
@@ -305,18 +310,9 @@ class DecoderLayer(nn.Module):
         """
         super().__init__()
 
-        # Self-attention block
-        self.self_attn_block = TransformerBlock(
-            embed_dim=hidden_dim,
-            num_heads=num_heads,
-            mlp_ratio=0,  # No MLP in self-attention block
-            dropout=dropout,
-            attention_dropout=attention_dropout,
-            drop_path=drop_path,
-            use_cross_attention=False,
-        )
+        # NOTE: No self-attention block - paper says "queries do not interact"
 
-        # Cross-attention block
+        # Cross-attention block (queries attend to encoder features only)
         self.cross_attn_block = TransformerBlock(
             embed_dim=hidden_dim,
             num_heads=num_heads,
@@ -358,10 +354,7 @@ class DecoderLayer(nn.Module):
         Returns:
             output: [B, N, hidden_dim] transformed features
         """
-        # Self-attention
-        x = self.self_attn_block(x)
-
-        # Cross-attention to encoder features
+        # Cross-attention to encoder features ONLY (no self-attention per paper)
         x = self.cross_attn_block(x, context=context)
 
         # FFN

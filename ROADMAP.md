@@ -12,9 +12,9 @@
 
 ## Current Status
 
-**Phase**: 14 in progress (Multi-dataset training)
-**Training**: Step 70,487 / 100,000 (70% complete)
-**Best Checkpoint**: Step 70,000
+**Phase**: 14.5 (Retrain with paper author fixes)
+**Training**: Fresh start with +1 depth init, paper loss normalization, fixed evaluation
+**Changes**: See Phase 14.4 for details
 
 ### Multi-Dataset Training Results (2026-02-07, Step 70k)
 
@@ -201,18 +201,63 @@ The model should infer depth from monocular cues, but decoder fails to preserve 
 
 **Next Step:** Retrain with new scale-invariant loss. The model should learn better relative structure when not penalized for scale mismatch.
 
-### Phase 14.4: Retrain with Paper Loss (TODO)
+### Phase 14.4: Paper Author Feedback & Fixes (2026-02-17)
 
-1. Stop current training
-2. Start fresh training from step 0 (or resume from earlier checkpoint before multi-dataset)
-3. Use new scale-invariant loss
-4. Evaluate with scale_shift alignment
-5. Expected: Better AJ after alignment
+**Author Response** (Mehdi Sajjadi, D4RT paper):
+- No special tricks beyond what's in the paper
+- Scale is normalized during training (Sec. 2.3)
+- Some regression-to-the-mean is expected
+- **Key trick**: Add +1 to estimated depth values since initialization starts at 0
 
-**Architectural improvements** (if retraining doesn't help):
-- Separate depth head with dedicated features
-- Depth-aware attention mechanism
-- Auxiliary depth loss
+**Fixes Implemented**:
+
+1. **Added +1 depth initialization** ✓
+   - File: `d4rt/models/decoder.py` (line 258-262)
+   - `xyz[..., 2:3] + 1.0` added to depth output
+   - Prevents training dynamics issues from zero initialization
+
+2. **Fixed evaluation to match TAP-Vid-3D protocol** ✓
+   - File: `d4rt/evaluation/metrics.py`
+   - Changed from Procrustes-style (center + Frobenius scale) to official protocol
+   - Official: `scale = median(||P_gt||) / median(||P_pred||)` where `||P|| = sqrt(x² + y² + z²)`
+   - Uses 3D Euclidean norms from origin, NOT centering
+
+3. **Training loss uses paper's normalization** ✓
+   - File: `d4rt/losses/composite_loss.py`, `configs/training/train_50k_movi_paper.yaml`
+   - `norm_mode: paper` (independent Z-mean normalization)
+   - `pred_norm = pred_xyz / mean(pred_z)`, `gt_norm = gt_xyz / mean(gt_z)`
+
+**Key Insight**: Training and evaluation metrics are correlated but NOT identical:
+- Training: Independent Z-mean normalization + signed log transform
+- Evaluation: Global median 3D norm scaling
+
+### Phase 14.5: Retrain with All Fixes (COMPLETED)
+
+Results at 50k steps:
+- Z correlation: 0.061 (almost random)
+- AJ: 0.0031 (1% of target)
+
+**Root cause identified**: Decoder architecture bug (see Phase 14.6)
+
+### Phase 14.6: Fix Decoder Architecture (IN PROGRESS)
+
+**Critical Bug Found**: Self-attention in decoder violates paper specification.
+
+The D4RT paper says "queries do not interact" - queries should only cross-attend to encoder features. Our implementation had self-attention which allowed queries to mix information, diluting depth-specific features.
+
+**Evidence**: Depth signal degraded through decoder layers (from 0.58 → 0.11 correlation).
+
+**Fix Applied** (`d4rt/models/decoder.py`):
+- Removed `self_attn_block` from `DecoderLayer`
+- Decoder now only has cross-attention + FFN per layer
+- Matches paper: "queries do not interact"
+
+**Expected Impact**:
+- Reduced decoder parameters (removed 8 self-attention blocks)
+- Better preservation of depth signal through decoder layers
+- Improved Z correlation and AJ metrics
+
+**Next**: Retrain from scratch with fixed architecture
 
 ---
 
