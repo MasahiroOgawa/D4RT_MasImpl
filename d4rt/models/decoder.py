@@ -10,10 +10,12 @@ global scene representation to output:
 - confidence: prediction quality [B, N, 1]
 """
 
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional
+
 from .components.attention import TransformerBlock
 
 
@@ -57,7 +59,7 @@ class ContextPooling(nn.Module):
         """
         # x: [B, input_tokens, embed_dim]
         x = x.transpose(1, 2)  # [B, embed_dim, input_tokens]
-        x = self.pool(x)       # [B, embed_dim, output_tokens]
+        x = self.pool(x)  # [B, embed_dim, output_tokens]
         x = x.transpose(1, 2)  # [B, output_tokens, embed_dim]
         return x
 
@@ -144,30 +146,32 @@ class CrossAttentionDecoder(nn.Module):
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, num_layers)]
 
         # Decoder layers with cross-attention
-        self.layers = nn.ModuleList([
-            DecoderLayer(
-                hidden_dim=hidden_dim,
-                num_heads=num_heads,
-                mlp_ratio=mlp_ratio,
-                dropout=dropout,
-                attention_dropout=attention_dropout,
-                drop_path=dpr[i],
-            )
-            for i in range(num_layers)
-        ])
+        self.layers = nn.ModuleList(
+            [
+                DecoderLayer(
+                    hidden_dim=hidden_dim,
+                    num_heads=num_heads,
+                    mlp_ratio=mlp_ratio,
+                    dropout=dropout,
+                    attention_dropout=attention_dropout,
+                    drop_path=dpr[i],
+                )
+                for i in range(num_layers)
+            ]
+        )
 
         # Final layer norm
         self.norm = nn.LayerNorm(hidden_dim)
 
         # ========== Output Heads ==========
         # Primary outputs (always present)
-        self.xyz_head = nn.Linear(hidden_dim, 3)      # 3D position (x, y, z)
-        self.vis_head = nn.Linear(hidden_dim, 1)      # Visibility logit
+        self.xyz_head = nn.Linear(hidden_dim, 3)  # 3D position (x, y, z)
+        self.vis_head = nn.Linear(hidden_dim, 1)  # Visibility logit
         self.confidence_head = nn.Linear(hidden_dim, 1)  # Confidence score
 
         # Optional output heads
         if output_uv:
-            self.uv_head = nn.Linear(hidden_dim, 2)   # 2D coordinates (u, v)
+            self.uv_head = nn.Linear(hidden_dim, 2)  # 2D coordinates (u, v)
         else:
             self.uv_head = None
 
@@ -251,22 +255,27 @@ class CrossAttentionDecoder(nn.Module):
         outputs = {}
 
         # Primary outputs
-        outputs['xyz'] = self.xyz_head(x)  # [B, N, 3]
-        outputs['visibility'] = self.vis_head(x)  # [B, N, 1]
-        outputs['confidence'] = self.confidence_head(x)  # [B, N, 1] raw logits
+        # Add +1 to depth (Z) as per D4RT author:
+        # "we add 1 to the estimated depth values since the initialization
+        # would otherwise start at 0, hindering training dynamics"
+        xyz = self.xyz_head(x)  # [B, N, 3]
+        xyz = torch.cat([xyz[..., :2], xyz[..., 2:3] + 1.0], dim=-1)
+        outputs["xyz"] = xyz
+        outputs["visibility"] = self.vis_head(x)  # [B, N, 1]
+        outputs["confidence"] = self.confidence_head(x)  # [B, N, 1] raw logits
 
         # Optional outputs
         if self.uv_head is not None:
             # UV coordinates in [0, 1] range
-            outputs['uv'] = torch.sigmoid(self.uv_head(x))  # [B, N, 2]
+            outputs["uv"] = torch.sigmoid(self.uv_head(x))  # [B, N, 2]
 
         if self.normals_head is not None:
             # Surface normals, unit normalized
             normals = self.normals_head(x)  # [B, N, 3]
-            outputs['normals'] = F.normalize(normals, dim=-1)  # [B, N, 3]
+            outputs["normals"] = F.normalize(normals, dim=-1)  # [B, N, 3]
 
         if self.motion_head is not None:
-            outputs['motion'] = self.motion_head(x)  # [B, N, 3]
+            outputs["motion"] = self.motion_head(x)  # [B, N, 3]
 
         return outputs
 
@@ -331,6 +340,7 @@ class DecoderLayer(nn.Module):
 
         # Drop path
         from .components.attention import DropPath
+
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
 
     def forward(
@@ -371,18 +381,18 @@ def build_decoder(config: dict) -> CrossAttentionDecoder:
         decoder: CrossAttentionDecoder instance
     """
     return CrossAttentionDecoder(
-        query_dim=config.get('query_dim', 512),
-        context_dim=config.get('context_dim', 768),
-        hidden_dim=config.get('hidden_dim', 512),
-        num_layers=config.get('num_layers', 8),
-        num_heads=config.get('num_heads', 8),
-        mlp_ratio=config.get('mlp_ratio', 4.0),
-        dropout=config.get('dropout', 0.0),
-        attention_dropout=config.get('attention_dropout', 0.0),
-        drop_path_rate=config.get('drop_path_rate', 0.1),
-        context_pool_tokens=config.get('context_pool_tokens', None),
-        context_input_tokens=config.get('context_input_tokens', 3072),
-        output_uv=config.get('output_uv', True),
-        output_normals=config.get('output_normals', True),
-        output_motion=config.get('output_motion', True),
+        query_dim=config.get("query_dim", 512),
+        context_dim=config.get("context_dim", 768),
+        hidden_dim=config.get("hidden_dim", 512),
+        num_layers=config.get("num_layers", 8),
+        num_heads=config.get("num_heads", 8),
+        mlp_ratio=config.get("mlp_ratio", 4.0),
+        dropout=config.get("dropout", 0.0),
+        attention_dropout=config.get("attention_dropout", 0.0),
+        drop_path_rate=config.get("drop_path_rate", 0.1),
+        context_pool_tokens=config.get("context_pool_tokens", None),
+        context_input_tokens=config.get("context_input_tokens", 3072),
+        output_uv=config.get("output_uv", True),
+        output_normals=config.get("output_normals", True),
+        output_motion=config.get("output_motion", True),
     )

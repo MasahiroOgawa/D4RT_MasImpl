@@ -102,3 +102,32 @@ Metrics being tracked:
 1. **Depth variance collapse**: Model predicts near-constant depth. Fixed with direct L1 depth loss (λ=1.0)
 2. **Confidence exploitation**: Model outputs low confidence to reduce weighted loss. Fixed with confidence warmup over 25k steps
 3. **3D loss scale invariance**: Paper's normalization allows trivial solutions. Using DUSt3R-style joint normalization
+4. **Depth +1 initialization**: Per author feedback (Feb 2026), add +1 to predicted Z values - "initialization would otherwise start at 0, hindering training dynamics"
+
+## Author Feedback (Feb 2026)
+
+From Mehdi Sajjadi (Google DeepMind):
+- Scale is normalized during training (Sec. 2.3) → model predicts normalized values at inference
+- Evaluations use standard procedures: **either matching scales, or scale-invariant metrics**
+- Some regression-to-the-mean is expected since predictions are deterministic
+- **Key trick**: Add +1 to estimated depth values since initialization starts at 0
+
+## Evaluation Protocol
+
+Following official TAP-Vid-3D benchmark (https://github.com/google-deepmind/tapnet/tree/main/tapnet/tapvid3d):
+
+**Scale Alignment (Global Median Rescaling):**
+```
+scale = median(||P_gt||) / median(||P_pred||)
+pred_aligned = pred * scale
+```
+Where `||P|| = sqrt(x² + y² + z²)` is 3D Euclidean norm from origin.
+
+**Training vs Evaluation:**
+| Aspect | Training (Paper) | Evaluation (TAP-Vid-3D) |
+|--------|------------------|------------------------|
+| Normalization | Independent Z-mean | Joint 3D-norm median |
+| Formula | `xyz / mean(z)` | `xyz * scale` |
+| Transform | Signed log | None |
+
+Both are correlated: lower training loss → lower evaluation error (~5x ratio).
