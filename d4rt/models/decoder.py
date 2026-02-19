@@ -16,7 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .components.attention import TransformerBlock
+from .components.attention import DropPath, MultiHeadAttention
 
 
 class ContextPooling(nn.Module):
@@ -310,18 +310,9 @@ class DecoderLayer(nn.Module):
         """
         super().__init__()
 
-        # NOTE: No self-attention block - paper says "queries do not interact"
-
-        # Cross-attention block (queries attend to encoder features only)
-        self.cross_attn_block = TransformerBlock(
-            embed_dim=hidden_dim,
-            num_heads=num_heads,
-            mlp_ratio=0,  # No MLP in cross-attention block
-            dropout=dropout,
-            attention_dropout=attention_dropout,
-            drop_path=drop_path,
-            use_cross_attention=True,
-        )
+        # Cross-attention only (NO self-attention per paper: "queries do not interact")
+        self.cross_norm = nn.LayerNorm(hidden_dim)
+        self.cross_attn = MultiHeadAttention(hidden_dim, num_heads, dropout=attention_dropout)
 
         # FFN block
         self.norm_ffn = nn.LayerNorm(hidden_dim)
@@ -335,8 +326,6 @@ class DecoderLayer(nn.Module):
         )
 
         # Drop path
-        from .components.attention import DropPath
-
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
 
     def forward(
@@ -355,7 +344,7 @@ class DecoderLayer(nn.Module):
             output: [B, N, hidden_dim] transformed features
         """
         # Cross-attention to encoder features ONLY (no self-attention per paper)
-        x = self.cross_attn_block(x, context=context)
+        x = x + self.drop_path(self.cross_attn(self.cross_norm(x), key=context, value=context))
 
         # FFN
         x = x + self.drop_path(self.mlp(self.norm_ffn(x)))
