@@ -204,6 +204,7 @@ def main(config: DictConfig):
     trainer_config = OmegaConf.to_container(config.training, resolve=True)
     trainer_config["optimizer"] = OmegaConf.to_container(config.get("optimizer", {}), resolve=True)
     trainer_config["scheduler"] = OmegaConf.to_container(config.get("scheduler", {}), resolve=True)
+    trainer_config["save_dir"] = config.logging.get("save_dir", "checkpoints")
 
     trainer = D4RTTrainer(
         model=model,

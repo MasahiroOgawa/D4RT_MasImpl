@@ -27,7 +27,7 @@ training:
     motion: 0.1
     visibility: 0.1
     confidence: 0.2
-    depth: 1.0
+    depth: 0.0  # Not in original paper - paper uses scale-invariant 3D loss only
     norm_mode: paper
 
 optimizer:

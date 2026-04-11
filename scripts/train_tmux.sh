@@ -11,6 +11,7 @@
 # Examples:
 #   ./scripts/train_tmux.sh                                    # Default config (fresh start)
 #   ./scripts/train_tmux.sh train_50k_movi_paper               # Specific config
+#   ./scripts/train_tmux.sh train_tapvid3d                     # TAP-Vid-3D training
 #   ./scripts/train_tmux.sh train_50k_movi_paper checkpoint.pth # Resume from checkpoint
 
 set -e
@@ -22,6 +23,15 @@ RESUME_CHECKPOINT="${2:-}"
 PROJECT_DIR="/home/mas/proj/study/D4RT_MasImpl"
 LOG_DIR="${PROJECT_DIR}/outputs"
 EVAL_INTERVAL=1000  # Every 1000 steps
+
+# Derive checkpoint directory from config's logging.save_dir
+CKPT_DIR=$(python3 -c "
+import yaml, sys
+with open('${PROJECT_DIR}/configs/training/${CONFIG_NAME}.yaml') as f:
+    cfg = yaml.safe_load(f)
+print(cfg.get('logging', {}).get('save_dir', 'checkpoints'))
+" 2>/dev/null || echo "checkpoints")
+CKPT_DIR="${PROJECT_DIR}/${CKPT_DIR}"
 
 # Create log directory
 mkdir -p "$LOG_DIR"
@@ -35,8 +45,9 @@ fi
 
 # Clear checkpoints for fresh start (unless resuming)
 if [ -z "$RESUME_CHECKPOINT" ]; then
-    echo "Clearing checkpoints for fresh start..."
-    rm -f "${PROJECT_DIR}/checkpoints/"*.pth "${PROJECT_DIR}/checkpoints/"*.json 2>/dev/null || true
+    echo "Clearing checkpoints in ${CKPT_DIR} for fresh start..."
+    mkdir -p "$CKPT_DIR"
+    rm -f "${CKPT_DIR}/"*.pth "${CKPT_DIR}/"*.json 2>/dev/null || true
 fi
 
 # Build training command
@@ -57,6 +68,7 @@ echo "=============================================="
 echo "Session:    $SESSION_NAME"
 echo "Config:     $CONFIG_NAME"
 echo "Resume:     ${RESUME_CHECKPOINT:-None (fresh start)}"
+echo "Checkpoints: $CKPT_DIR"
 echo "Train log:  $TRAIN_LOG"
 echo "Eval log:   $EVAL_LOG"
 echo "Eval interval: $EVAL_INTERVAL steps"
@@ -81,7 +93,7 @@ tmux send-keys -t "${SESSION_NAME}:battery" "bash scripts/battery_monitor.sh 2>&
 
 # Create a status window for quick view
 tmux new-window -t "$SESSION_NAME" -n status -c "$PROJECT_DIR"
-tmux send-keys -t "${SESSION_NAME}:status" "watch -n 30 'echo \"=== Training ===\"; tail -3 $TRAIN_LOG 2>/dev/null; echo; echo \"=== Latest Eval ===\"; tail -15 $EVAL_LOG 2>/dev/null; echo; echo \"=== Checkpoints ===\"; ls -lt checkpoints/*.pth 2>/dev/null | head -3'" Enter
+tmux send-keys -t "${SESSION_NAME}:status" "watch -n 30 'echo \"=== Training ===\"; tail -3 $TRAIN_LOG 2>/dev/null; echo; echo \"=== Latest Eval ===\"; tail -15 $EVAL_LOG 2>/dev/null; echo; echo \"=== Checkpoints ===\"; ls -lt ${CKPT_DIR}/*.pth 2>/dev/null | head -3'" Enter
 
 # Select training window
 tmux select-window -t "${SESSION_NAME}:training"
