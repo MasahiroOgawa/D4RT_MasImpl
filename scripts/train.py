@@ -5,19 +5,21 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import torch
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
-import hydra
-from omegaconf import DictConfig, OmegaConf
 import os
 
-from d4rt.models import build_d4rt_model
-from d4rt.models.encoder import load_videomae_weights
-from d4rt.losses import build_composite_loss
-from d4rt.training import D4RTTrainer
+import hydra
+import torch
+import torch.distributed as dist
+from omegaconf import DictConfig, OmegaConf
+from torch.nn.parallel import DistributedDataParallel as DDP
+
 from d4rt.data.datasets.kubric import create_kubric_dataloaders
 from d4rt.data.datasets.multi_dataset import create_multi_dataloaders
+from d4rt.data.datasets.tapvid3d import create_tapvid3d_dataloaders
+from d4rt.losses import build_composite_loss
+from d4rt.models import build_d4rt_model
+from d4rt.models.encoder import load_videomae_weights
+from d4rt.training import D4RTTrainer
 
 
 def setup_distributed():
@@ -154,6 +156,23 @@ def main(config: DictConfig):
         }
         train_loader, val_loader = create_multi_dataloaders(
             config=md_config,
+            num_workers=config.training.get("num_workers", 0),
+        )
+    elif config.dataset.get("name", "kubric") == "tapvid3d":
+        # TAP-Vid-3D dataset
+        dataset_config = {
+            "data_dir": config.dataset.get("data_dir", "data/tapvid3d"),
+            "num_frames": config.dataset.get("num_frames", 24),
+            "resolution": config.dataset.get("resolution", [256, 256]),
+            "num_queries": config.training.get("num_queries_per_step", 128),
+            "batch_size": config.training.get("batch_size", 1),
+            "subsets": list(config.dataset.get("subsets", ["drivetrack", "pstudio"])),
+            "train_ratio": config.dataset.get("train_ratio", 0.8),
+            "augmentation": config.dataset.get("augmentation", {}),
+        }
+
+        train_loader, val_loader = create_tapvid3d_dataloaders(
+            config=dataset_config,
             num_workers=config.training.get("num_workers", 0),
         )
     else:
